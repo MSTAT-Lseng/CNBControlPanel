@@ -120,15 +120,15 @@ Used at the top of `概览`, `账户`, `用量`, and `设置`:
 
 ### 5.2 账户 (Accounts Tab — `accounts`)
 1. **Header Right Actions (App Store Style):**
-   - **一键同步** button (`arrow.triangle.2.circlepath`): Syncs all accounts via Exchange; shows subtle spinner while running and toast/banner summary on completion.
+   - **一键同步** button (`arrow.triangle.2.circlepath`): Syncs all accounts via Exchange; shows subtle spinner while running, updates the top feedback banner (`success` green or tappable `error` red), and immediately opens a native `Alert.alert` detailing every failed account and its reason whenever `failed > 0`.
    - **新建** button (`plus`): Pushes standalone `account-editor` page (`mode: 'create'`).
 2. **Account List (iOS 18 Inset Grouped Cards):**
    - Each account row displays:
      - **Avatar:** `44x44pt` circle with deterministic pastel/brand tint background and the **first character of `username`** centered in bold white (`18pt`).
-     - **Primary Info:** `username` (`17pt` semibold) + optional `remark` pill/subtitle (`13pt` secondary).
+     - **Primary Info & Per-Account Sync Status:** `username` (`16pt` semibold) paired with an inline status badge: **`更新中`** (`themeAccent` `#F76945`), **`更新成功`** (`accentGreen` `#34C759`), **`更新失败`** (`accentRed` `#FF3B30`, tappable to open the account's failure detail alert), or **`待更新`** (`accentOrange` `#FF9500`), followed by optional `remark` (`备注：...`).
      - **Masked Cookie:** Monospace `12pt` tertiary label showing first 6 chars + `••••` + last 4 chars (gracefully shortened for short strings).
-     - **Sync Timestamp:** Relative/formatted time (e.g., `最后更新：10:35` or `未同步` with orange dot if > 1h).
-     - **Row Actions:** Trailing edit button (chevron / `pencil` pushing `account-editor` in `edit` mode) and delete button (`trash` in red `#FF3B30`, triggering native `Alert.alert` confirmation).
+     - **Sync Timestamp & Inline Failure Preview:** Formatted time (`用量更新：<time>` / `尚未同步`), plus a tappable red `失败原因：...` line on failed accounts that opens the full failure reason alert.
+     - **Row Actions:** Trailing edit button (`pencil` pushing `account-editor` in `edit` mode) and delete button (`trash` in red `#FF3B30`, triggering native `Alert.alert` confirmation).
 3. **Empty State:** Prompts tapping `+` to add the first account.
 
 ---

@@ -21,7 +21,7 @@
    - Validate changes using static checks (`npx tsc --noEmit`, ESLint, and automated architectural boundary checks). Avoid dynamic debugging unless strictly unavoidable.
    - **NEVER** start or build Expo Web (`npx expo start --web`, `npx expo export --platform web`, or browser-based app debugging).
 4. **English Comments Only:** Every comment in `.ts` and `.tsx` files must be in English. User-facing UI strings remain in Simplified Chinese (`zh-CN`).
-5. **Mocked Parser Phase:** `Usage Parser Service` currently generates realistic randomized mock data matching the target schema. Real CNB API/page parsing will replace only the internal fetcher/parser implementation later without changing service contracts.
+5. **Live CNB Data Parsing:** `Usage Parser Service` queries live CNB (`https://cnb.cool`) read-only endpoints and Next.js SSR `__NEXT_DATA__` payloads using `fetch` with `credentials: 'omit'` to prevent cross-account cookie leakage in iOS `NSHTTPCookieStorage`.
 
 ---
 
@@ -66,7 +66,8 @@ CNBControlPanel/
         │   └── secureCookieStore.ts
         ├── parser/                   # [Service 3] Usage Parser Service
         │   ├── index.ts
-        │   └── mockGenerator.ts
+        │   ├── httpClient.ts
+        │   └── cnbHtmlParser.ts
         └── exchange/                 # [Service 4] Update Exchange Service + Log Subsystem
             ├── index.ts
             ├── validator.ts
@@ -202,18 +203,26 @@ Key domain models:
 
 ### 3.3 Usage Parser Service (`src/services/parser/`)
 
-**Purpose:** Given `{ username, cookie }`, fetch/parse CNB official endpoints/pages and output structured quota usage data.
+**Purpose:** Given `{ username, cookie }`, execute read-only GET requests against `https://cnb.cool`, parse organization billing data, and output a structured `UsageSnapshot`.
 
 **Core API Contract:**
 - `parseUsage({ username, cookie })` -> `Promise<ServiceResult<UsageSnapshot>>`
 
-**Current Phase (Randomized Sample Data Generator):**
-- Validates presence of non-empty `username` and `cookie` defensively, simulates realistic async network latency (e.g., 250–600 ms), and generates deterministic-yet-varied randomized packages per request:
-  - **AI Credits (`Credits`)**: 1 to 3 packages (always includes `免费配额`, optionally `高校师生专属特权`, `开发者激励额度包`).
-  - **云原生构建-CPU (`核时`)**: 1 to 2 packages (always includes `免费配额`, optionally `高校师生专属特权`).
-  - **云原生开发-CPU (`核时`)**: 1 to 2 packages (always includes `免费配额`, optionally `云原生开发专项配额`).
-- Deliberately produces varied utilization states across packages (`< 60%`, `60%–80%`, `>= 80%`) and randomly includes `locked` quotas on some packages (and omits `locked` on others) so every UI visualization state can be tested realistically.
-- Logs detailed `V`/`I`/`W`/`E` trace events for every parsing attempt.
+**Live Implementation (`httpClient.ts`, `cnbHtmlParser.ts`, `index.ts`):**
+1. **Cookie Isolation & Resilience (`httpClient.ts`):**
+   - Strips optional leading `Cookie:` prefix and line breaks via `sanitizeCookieHeader` without ever logging raw cookies.
+   - Calls `fetch` with `credentials: 'omit'` so React Native's native `NSHTTPCookieStorage` never leaks cookies across accounts.
+   - Applies a 20-second `AbortController` timeout and up to 2 exponential-backoff retries on HTTP `429`/`5xx` or network errors.
+2. **Account & Organization Discovery (`index.ts`):**
+   - Verifies session validity via `GET /user` (`Accept: application/json`), rejecting HTTP `401` clearly.
+   - If `username` matches the authenticated Cookie user (case-insensitive), paginates `GET /user/groups?page=N&page_size=100` using `x-cnb-total` / `x-cnb-page-size`.
+   - If `username` differs from the Cookie user, fetches `GET /u/{username}/groups` HTML and extracts `props.pageProps.initialState.user.global.userGroups` from `__NEXT_DATA__`.
+3. **Billing Extraction, Unit Conversion & Freeze Allocation (`cnbHtmlParser.ts`):**
+   - Fetches `GET /{org}/-/settings/charge` HTML (rate-limited at 450 ms between organizations) and extracts `props.pageProps.initialState.group.setting.charge` from `__NEXT_DATA__`.
+   - Sub-organizations (`org/sub`) lacking an independent charge page automatically fall back to their root organization (`org`) and are deduplicated by resolved root path to avoid double-counting.
+   - Converts raw metrics: `credit_in_milli ÷ 1000` -> `Credits`; `ci_in_sec ÷ 3600` & `dev_in_sec ÷ 3600` -> `核时`.
+   - Allocates `formattedPacks` sequentially in array order and assigns pre-frozen amounts (`charge.freezeVolume[resType]` falling back to `usage.data['freeze_' + usageKey]`) to remaining pack capacity (`QuotaPackage.locked`, omitted when zero).
+   - Emits `V`/`I`/`W`/`E` trace events for every stage while keeping credentials redacted.
 
 ---
 

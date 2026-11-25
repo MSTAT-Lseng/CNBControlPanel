@@ -6,7 +6,7 @@ An iOS 26+ utility app built with **Expo SDK 58** and **Expo Go** to manage mult
 
 ## Key Features
 
-- **Multi-Account Management:** Add, edit (cookie & remark), delete, and one-tap sync multiple CNB accounts.
+- **Multi-Account Management:** Add, edit (cookie & remark), delete, and one-tap sync multiple CNB accounts with per-account sync status badges (`更新成功` / `更新失败` / `更新中` / `待更新`) and detailed failure reason alerts.
 - **Overview Dashboard:** Aggregated remaining, total, used, and locked quota statistics across all accounts, with automatic 1-hour staleness alerts.
 - **Detailed Per-User Quota Breakdown:** Horizontal per-user pages and animated icon metric tabs (`AI Credits`, `构建-CPU`, `开发-CPU`) showing individual quota packages (e.g. free tier, student perks) with threshold-colored progress bars (`<60%` Blue, `60%–80%` Orange, `>=80%` Red) and dark diagonal-striped locked-quota segments.
 - **Settings & Auto-Refresh:** App version & live system time, background refresh on app activation, configurable interval auto-refresh (minutes), cache/log reset, and an isolated Log viewer supporting partial and full clipboard export.
@@ -19,7 +19,7 @@ The codebase enforces strict separation across four independent services (see [A
 
 1. **User Interface Service (`src/services/ui/` + `src/app/`):** Expo Router `NativeTabs` (iOS 26 Liquid Glass bottom tab bar) with iOS 18 styling on all screens, App Store-style tab headers, and native stack headers for standalone pages.
 2. **Information Storage Service (`src/services/storage/`):** Hybrid `expo-sqlite` + `expo-secure-store` table/key/value persistence.
-3. **Usage Parser Service (`src/services/parser/`):** Takes `{ username, cookie }` and returns structured quota data (currently randomized mock data; real CNB endpoint parsing will be implemented later).
+3. **Usage Parser Service (`src/services/parser/`):** Takes `{ username, cookie }`, verifies the CNB session (`GET /user`), discovers organizations (`/user/groups` or `/u/{username}/groups`), parses `/{org}/-/settings/charge` `__NEXT_DATA__` SSR data (with sub-org root fallback), converts milli-credits and CPU-seconds to `Credits` / `核时`, and allocates sequential packs and pre-frozen quotas.
 4. **Update Exchange Service (`src/services/exchange/`):** Central mediator, validator, auto-refresh scheduler, and independent SQLite-backed `V/I/W/E` Log subsystem.
 
 > `UI`, `Storage`, and `Parser` never import or invoke one another directly; all communication passes through `Exchange`.
