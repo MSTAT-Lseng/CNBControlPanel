@@ -1,0 +1,298 @@
+# AGENTS.md — Technical Architecture & Implementation Specification
+
+> **Project:** CNB 面板 (`m20.cnb.panel`)  
+> **Target Platform:** iOS 26+ only (No Android, No Web)  
+> **Framework & Runtime:** Expo SDK 58 (React Native 0.88, React 19.3, TypeScript), debugged in **Expo Go**  
+> **Language Policy:** All source code comments, JSDoc blocks, and inline engineering notes **MUST be written in English**.
+
+---
+
+## 1. Project Overview & Constraints
+
+**CNB 面板** is a dedicated iOS utility app for monitoring remaining quotas across one or more CNB accounts/organizations:
+- **AI Credits** (unit: `Credits`)
+- **云原生构建-CPU** (unit: `核时`)
+- **云原生开发-CPU** (unit: `核时`)
+
+### Hard Technical Constraints
+1. **iOS 26+ Only:** Configure `"platforms": ["ios"]` in `app.json` and target iOS 26+. Do not write Android or Web compatibility shims or platform branches unless required by an underlying library's TypeScript signature.
+2. **Expo SDK 58 + Expo Go Compatibility:** Every dependency must be natively bundled in Expo Go SDK 58. Do not introduce custom native Swift/Obj-C modules or plugins that fail in Expo Go (e.g., do **not** enable `requireAuthentication: true` on `expo-secure-store`, and do **not** rely on OS-killed `BGTaskScheduler` background execution that requires a custom dev build).
+3. **Static Verification First & No Web Debugging:**
+   - Validate changes using static checks (`npx tsc --noEmit`, ESLint, and automated architectural boundary checks). Avoid dynamic debugging unless strictly unavoidable.
+   - **NEVER** start or build Expo Web (`npx expo start --web`, `npx expo export --platform web`, or browser-based app debugging).
+4. **English Comments Only:** Every comment in `.ts` and `.tsx` files must be in English. User-facing UI strings remain in Simplified Chinese (`zh-CN`).
+5. **Mocked Parser Phase:** `Usage Parser Service` currently generates realistic randomized mock data matching the target schema. Real CNB API/page parsing will replace only the internal fetcher/parser implementation later without changing service contracts.
+
+---
+
+## 2. Directory Layout & Four-Service Isolation
+
+The application is strictly partitioned into **four independent services** plus a thin Expo Router entry layer and a zero-logic TypeScript contract layer:
+
+```text
+CNBControlPanel/
+├── logo.svg                          # Master vector app icon
+├── app.json                          # Expo SDK 58 config (bundleIdentifier: m20.cnb.panel, ios only)
+├── package.json
+├── tsconfig.json
+├── eslint.config.js                  # Enforces service boundary & English-comment/lint rules
+├── scripts/
+│   └── check-boundaries.mjs          # Static dependency-graph verifier across services
+├── assets/                           # PNG icons/splash generated from logo.svg
+└── src/
+    ├── contracts/                    # Pure TypeScript types & port interfaces (NO runtime code)
+    │   ├── domain.ts                 # Account, UsageSnapshot, QuotaPackage, AppSettings, LogEntry
+    │   ├── results.ts                # Structured ServiceResult<T>, ErrorCode
+    │   └── ports.ts                  # LogReporter, StoragePort, ParserPort, ExchangePort
+    ├── app/                          # Thin Expo Router file-system routes (UI routing shell ONLY)
+    │   ├── _layout.tsx               # Root Stack (hosts (tabs) + standalone native-header pages)
+    │   ├── (tabs)/
+    │   │   ├── _layout.tsx           # expo-router/native-tabs (iOS 26 Liquid Glass bottom bar)
+    │   │   ├── index.tsx             # Re-exports OverviewScreen
+    │   │   ├── accounts.tsx          # Re-exports AccountsScreen
+    │   │   ├── usage.tsx             # Re-exports UsageScreen
+    │   │   └── settings.tsx          # Re-exports SettingsScreen
+    │   ├── account-editor.tsx        # Standalone create/edit account page (native Stack header)
+    │   └── logs.tsx                  # Standalone Log viewer page (native Stack header)
+    └── services/
+        ├── ui/                       # [Service 1] User Interface Service
+        │   ├── theme/
+        │   ├── components/
+        │   ├── hooks/
+        │   └── screens/
+        ├── storage/                  # [Service 2] Information Storage Service
+        │   ├── index.ts
+        │   ├── sqliteStore.ts
+        │   └── secureCookieStore.ts
+        ├── parser/                   # [Service 3] Usage Parser Service
+        │   ├── index.ts
+        │   └── mockGenerator.ts
+        └── exchange/                 # [Service 4] Update Exchange Service + Log Subsystem
+            ├── index.ts
+            ├── validator.ts
+            ├── transactions.ts
+            ├── scheduler.ts
+            └── logger/
+                ├── index.ts
+                └── logDatabase.ts
+```
+
+### Dependency & Access Matrix (Strictly Enforced)
+
+| Caller \ Target | `contracts` | `services/ui` | `services/storage` | `services/parser` | `services/exchange` |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `src/app/*` (Router Shell) | Allowed | Allowed | **FORBIDDEN** | **FORBIDDEN** | **FORBIDDEN** |
+| `src/services/ui/*` | Allowed | Self | **FORBIDDEN** | **FORBIDDEN** | Allowed |
+| `src/services/storage/*` | Allowed | **FORBIDDEN** | Self | **FORBIDDEN** | **FORBIDDEN** |
+| `src/services/parser/*` | Allowed | **FORBIDDEN** | **FORBIDDEN** | Self | **FORBIDDEN** |
+| `src/services/exchange/*` | Allowed | **FORBIDDEN** | Allowed | Allowed | Self |
+
+**How Logging Stays Decoupled Without Circular Imports:**
+- `src/contracts/ports.ts` defines a pure TypeScript interface `LogReporter` (`verbose`, `info`, `warn`, `error`).
+- `exchange` instantiates `storage` and `parser` via factory functions (`createStorageService(logger)` and `createParserService(logger)`), injecting a bound `LogReporter` instance.
+- Consequently, `storage` and `parser` **never** import `exchange`, `ui`, or each other, yet every single operation inside all four services emits structured `V`/`I`/`W`/`E` logs into the Exchange Log Subsystem.
+- `ui` reports UI interaction and lifecycle logs through `exchange.reportUiLog(...)`.
+
+---
+
+## 3. Detailed Design of Each Service
+
+### 3.1 Contracts Layer (`src/contracts/`)
+
+Zero runtime code—only `type` and `interface` declarations.
+
+Key domain models:
+- `QuotaMetricKey`: `'ai_credits' | 'build_cpu' | 'dev_cpu'`
+- `QuotaUnit`: `'Credits' | '核时'`
+- `QuotaPackage`:
+  ```ts
+  export interface QuotaPackage {
+    id: string;
+    name: string;        // e.g., "免费配额", "高校师生专属特权"
+    total: number;       // Total quota (>= 0)
+    used: number;        // Used quota (>= 0)
+    locked?: number;     // Optional locked quota (>= 0, omitted if absent)
+    unit: QuotaUnit;
+  }
+  ```
+- `MetricQuotaGroup`:
+  ```ts
+  export interface MetricQuotaGroup {
+    metric: QuotaMetricKey;
+    label: string;       // "AI Credits" | "云原生构建-CPU" | "云原生开发-CPU"
+    unit: QuotaUnit;
+    packages: QuotaPackage[]; // Guaranteed >= 1 package
+  }
+  ```
+- `UsageSnapshot`:
+  ```ts
+  export interface UsageSnapshot {
+    username: string;
+    fetchedAt: number;   // Unix epoch ms
+    aiCredits: MetricQuotaGroup;
+    buildCpu: MetricQuotaGroup;
+    devCpu: MetricQuotaGroup;
+  }
+  ```
+- `AccountRecord`:
+  ```ts
+  export interface AccountRecord {
+    username: string;    // Immutable primary key
+    cookie: string;      // Persisted securely via Storage service
+    remark: string;      // Optional user note (empty string when unset)
+    createdAt: number;
+    updatedAt: number;
+    lastSyncedAt: number | null;
+  }
+  ```
+- `AppSettings`:
+  ```ts
+  export interface AppSettings {
+    autoRefreshOnLaunch: boolean; // Auto-refresh in background on app activation
+    autoRefreshEnabled: boolean;  // Periodic interval auto-refresh toggle
+    autoRefreshIntervalMinutes: number; // Clamped integer >= 1 (default: 15)
+  }
+  ```
+- `LogLevel`: `'V' | 'I' | 'W' | 'E'`
+- `ServiceSource`: `'UI' | 'Storage' | 'Parser' | 'Exchange'`
+- `LogEntry`:
+  ```ts
+  export interface LogEntry {
+    id: string;
+    timestamp: number;
+    level: LogLevel;
+    source: ServiceSource;
+    action: string;
+    message: string;
+    details?: string;
+    note?: string;       // Supports Log CRUD update operations
+  }
+  ```
+
+---
+
+### 3.2 Information Storage Service (`src/services/storage/`)
+
+**Purpose:** Pure table/key/value persistence abstraction without business validation or knowledge of UI/Parser.
+
+**Selected Persistence Stack (Optimal for Expo SDK 58 & Expo Go):**
+1. **`expo-sqlite` (`cnb_panel_storage.db`)**: Primary structured key-value table store:
+   - Schema: `CREATE TABLE IF NOT EXISTS storage_records (table_name TEXT NOT NULL, record_key TEXT NOT NULL, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (table_name, record_key));`
+   - Supports arbitrary `table` + `key` + `value` serialization with prepared statements (`runAsync`, `getFirstAsync`, `getAllAsync`).
+2. **`expo-secure-store` (iOS Keychain)**: Transparently isolates sensitive credential payloads (specifically `accounts_secrets` / cookie strings) inside iOS Keychain rather than plaintext SQLite, while keeping key indexing and non-sensitive metadata in SQLite.
+   - SecureStore key naming uses an Expo-Go-safe sanitized identifier (`cnb.panel.secret.<hex-encoded-key>`) because iOS Keychain keys only permit `[A-Za-z0-9._-]`.
+   - `requireAuthentication` is explicitly **not** used so Expo Go never fails due to missing `NSFaceIDUsageDescription`.
+
+**Core API Contract:**
+- `save({ table, key, value })` -> `Promise<ServiceResult<{ table: string; key: string; savedAt: number }>>`
+- `read<T>({ table, key })` -> `Promise<ServiceResult<{ table: string; key: string; exists: boolean; value: T | null; updatedAt: number | null }>>`
+- Supporting table management methods on the same service:
+  - `remove({ table, key })` -> `Promise<ServiceResult<{ table: string; key: string; deleted: boolean }>>`
+  - `readTable<T>({ table })` -> `Promise<ServiceResult<Array<{ key: string; value: T; updatedAt: number }>>>`
+  - `clearTable({ table })` -> `Promise<ServiceResult<{ table: string; clearedCount: number }>>`
+
+**Logical Tables Managed by Exchange via Storage:**
+- `accounts`: Account profiles (`username`, `remark`, `createdAt`, `updatedAt`, `lastSyncedAt`)
+- `accounts_secrets`: Sensitive `cookie` values (routed to `expo-secure-store` inside Storage service)
+- `usage_cache`: Latest `UsageSnapshot` keyed by `username`
+- `settings`: App configuration keyed by `'app_settings'`
+
+---
+
+### 3.3 Usage Parser Service (`src/services/parser/`)
+
+**Purpose:** Given `{ username, cookie }`, fetch/parse CNB official endpoints/pages and output structured quota usage data.
+
+**Core API Contract:**
+- `parseUsage({ username, cookie })` -> `Promise<ServiceResult<UsageSnapshot>>`
+
+**Current Phase (Randomized Sample Data Generator):**
+- Validates presence of non-empty `username` and `cookie` defensively, simulates realistic async network latency (e.g., 250–600 ms), and generates deterministic-yet-varied randomized packages per request:
+  - **AI Credits (`Credits`)**: 1 to 3 packages (always includes `免费配额`, optionally `高校师生专属特权`, `开发者激励额度包`).
+  - **云原生构建-CPU (`核时`)**: 1 to 2 packages (always includes `免费配额`, optionally `高校师生专属特权`).
+  - **云原生开发-CPU (`核时`)**: 1 to 2 packages (always includes `免费配额`, optionally `云原生开发专项配额`).
+- Deliberately produces varied utilization states across packages (`< 60%`, `60%–80%`, `>= 80%`) and randomly includes `locked` quotas on some packages (and omits `locked` on others) so every UI visualization state can be tested realistically.
+- Logs detailed `V`/`I`/`W`/`E` trace events for every parsing attempt.
+
+---
+
+### 3.4 Update Exchange Service & Log Subsystem (`src/services/exchange/`)
+
+**Purpose:** Central transaction coordinator, validator, background/interval refresh scheduler, and independent logging subsystem.
+
+#### A. Independent Log Subsystem (`src/services/exchange/logger/`)
+- **Physical Isolation:** Uses its own dedicated SQLite database (`cnb_panel_logs.db`) via `expo-sqlite`, completely separate from `storage` (`cnb_panel_storage.db` / Keychain). If `storage` fails or clears cache, logs remain intact unless the user explicitly clears logs.
+- **Schema:**
+  ```sql
+  CREATE TABLE IF NOT EXISTS app_logs (
+    id TEXT PRIMARY KEY NOT NULL,
+    timestamp INTEGER NOT NULL,
+    level TEXT NOT NULL,
+    source TEXT NOT NULL,
+    action TEXT NOT NULL,
+    message TEXT NOT NULL,
+    details TEXT,
+    note TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_app_logs_timestamp ON app_logs(timestamp DESC);
+  ```
+- **Resilience:** Maintains a small in-memory pending queue if SQLite is still initializing at cold boot, flushing immediately once the DB handle opens, plus automatic retention cap (e.g., pruning oldest entries beyond 5,000 rows).
+- **CRUD Operations:**
+  - **Create:** `writeLog({ level, source, action, message, details? })`
+  - **Read:** `queryLogs({ levels?, sources?, search?, limit?, offset? })`
+  - **Update:** `updateLog({ id, note?, level?, message? })`
+  - **Delete:** `deleteLogs({ ids })` / `clearLogs()`
+
+#### B. Validation & Transactions (`validator.ts` & `transactions.ts`)
+Every transaction validates inputs before invoking `storage` or `parser`, logs start/success/failure, and emits state-change events to subscribed UI hooks:
+1. `listAccounts()` — merges `accounts` metadata + masked/full cookie lookup status as needed by Exchange; returns sanitized `AccountView` (`maskedCookie` for UI lists) or edit payload (`cookie` only when requested for editing).
+2. `createAccount({ username, cookie, remark })` — rejects empty `username`/`cookie` or duplicate `username`; persists account metadata + secret cookie.
+3. `updateAccount({ username, cookie, remark })` — rejects `username` modification; updates `cookie` and `remark`.
+4. `deleteAccount({ username })` — removes from `accounts`, `accounts_secrets`, and `usage_cache`.
+5. `syncAccountUsage({ username })` — reads account + cookie from `storage`, calls `parser.parseUsage`, validates returned `UsageSnapshot`, updates `usage_cache` and `lastSyncedAt` in `accounts`.
+6. `syncAllAccountsUsage()` — iterates through all stored accounts sequentially/bounded-concurrently, aggregates per-account successes & failures, and updates state atomically per account.
+7. `getOverviewData()` — reads all accounts + cached snapshots; computes aggregated totals (`remaining`, `total`, `used`, `locked`, `percentage`) for `aiCredits`, `buildCpu`, and `devCpu`, plus `hasStaleAccounts` (`lastSyncedAt === null` or `now - lastSyncedAt > 3_600_000` ms) and `staleUsernames`.
+8. `getAllUsageSnapshots()` — returns ordered user list paired with their cached `UsageSnapshot | null`.
+9. `getSettings()` / `updateSettings(patch)` — reads/updates `AppSettings`, reconfiguring the auto-refresh scheduler immediately.
+10. `clearCacheAndLogs()` — clears `usage_cache` via `storage.clearTable({ table: 'usage_cache' })`, resets `lastSyncedAt` to `null` on accounts (preserving accounts and settings), and calls `logger.clearLogs()`, then logs a fresh `I` entry confirming the reset.
+
+#### C. Auto-Refresh Scheduler (`scheduler.ts`)
+- Listens to React Native `AppState` transitions (`'background' | 'inactive'` -> `'active'`).
+  - When `autoRefreshOnLaunch` is `true`, triggers a non-blocking silent `syncAllAccountsUsage()` on initial app startup and when returning to foreground (debounced e.g. at least 15s between foreground triggers to avoid duplicate bursts).
+- When `autoRefreshEnabled` is `true`, runs a `setInterval` timer every `autoRefreshIntervalMinutes * 60_000` ms while the app is active, triggering `syncAllAccountsUsage()`.
+- Re-arms/cancels cleanly whenever settings change.
+
+---
+
+### 3.5 User Interface Service (`src/services/ui/`) & Router Shell (`src/app/`)
+
+- **Root Navigation (`src/app/_layout.tsx`)**:
+  - Uses `<Stack>` with `headerShown: false` for `(tabs)` and `headerShown: true` (system native header, iOS 18 non-glass styling: `headerTransparent: false`, explicit opaque iOS 18 background color, `headerBlurEffect: undefined`) for standalone pages (`account-editor`, `logs`).
+  - Initializes `exchangeService.initialize()` once on mount and subscribes cleanly.
+- **Tab Bar (`src/app/(tabs)/_layout.tsx`)**:
+  - Uses `expo-router/native-tabs` (`NativeTabs`) to get the authentic **iOS 26 Liquid Glass** bottom tab bar with SF Symbols:
+    1. `index` -> Title: `概览`, SF Symbol: `{ default: 'chart.bar', selected: 'chart.bar.fill' }`
+    2. `accounts` -> Title: `账户`, SF Symbol: `{ default: 'person.2', selected: 'person.2.fill' }`
+    3. `usage` -> Title: `用量`, SF Symbol: `{ default: 'gauge.with.dots.needle.33percent', selected: 'gauge.with.dots.needle.67percent' }`
+    4. `settings` -> Title: `设置`, SF Symbol: `{ default: 'gearshape', selected: 'gearshape.fill' }`
+- **Tab Screen Layout Rules**:
+  - No `RefreshControl` (pull-to-refresh is strictly disabled on all 4 main tabs).
+  - App Store-inspired inline header inside the scroll view starting cleanly at `insets.top + 8`: large bold title on the left + circular/capsule action button(s) on the right.
+  - ScrollView uses `contentInsetAdjustmentBehavior="automatic"` (or explicit safe bottom padding when needed) so content scrolls cleanly under the Liquid Glass tab bar without hiding final items or creating wasted top whitespace below the Dynamic Island.
+- **App Version Retrieval in Expo Go**:
+  - Reads `Constants.expoConfig?.version ?? '1.0.0'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
+
+---
+
+## 4. Key Engineering Policies & Verification Checklist
+
+1. **Boundary Enforcement (`scripts/check-boundaries.mjs` + ESLint):**
+   - Statically parses all `.ts`/`.tsx` imports under `src/`.
+   - Fails immediately if `ui` or `app` imports `storage` or `parser`, or if `storage`/`parser` imports `ui`, `exchange`, `app`, or each other.
+2. **English Comment Audit:**
+   - All comments (`//` and `/* ... */`) across `src/` must be in English. UI string literals inside JSX/constants are Chinese.
+3. **Static Quality Gate (Run After Edits):**
+   - `npx tsc --noEmit`
+   - `npx eslint .`
+   - `node scripts/check-boundaries.mjs`
+   - **No Web builds** (`expo start --web` / `expo export --platform web` prohibited).
