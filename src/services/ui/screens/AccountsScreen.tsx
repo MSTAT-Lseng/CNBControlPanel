@@ -4,13 +4,13 @@
  * and provides create, edit (cookie/remark only), delete, and one-tap sync-all actions.
  */
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { AccountView } from '@/contracts';
+import type { AccountView, BatchSyncSummary } from '@/contracts';
 import { exchangeService } from '@/services/exchange';
 import { AppStoreTabHeader } from '../components/AppStoreTabHeader';
 import { EmptyStateCard } from '../components/StatusBanners';
@@ -22,12 +22,53 @@ import {
   useIos18Palette,
 } from '../theme/tokens';
 
+function formatBatchErrorDetails(summary: BatchSyncSummary): string {
+  if (summary.errors.length === 1) {
+    const single = summary.errors[0];
+    return single ? `账户：${single.username}\n原因：${single.message}` : '未知错误';
+  }
+  return summary.errors
+    .map((item, idx) => `${idx + 1}. ${item.username}\n原因：${item.message}`)
+    .join('\n\n');
+}
+
 export function AccountsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const palette = useIos18Palette();
-  const { accounts, isSyncing } = useExchangeState();
-  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const { accounts, isSyncing, syncingUsernames, lastSyncSummary } = useExchangeState();
+  const [feedbackBanner, setFeedbackBanner] = useState<{
+    kind: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  const errorByUsername = useMemo(() => {
+    const map = new Map<string, string>();
+    if (lastSyncSummary) {
+      for (const item of lastSyncSummary.errors) {
+        map.set(item.username, item.message);
+      }
+    }
+    return map;
+  }, [lastSyncSummary]);
+
+  const showFailureSummaryAlert = (summary: BatchSyncSummary) => {
+    if (summary.errors.length === 0) {
+      return;
+    }
+    const title =
+      summary.succeeded > 0
+        ? `部分账户更新失败（${summary.failed}/${summary.total}）`
+        : summary.errors.length === 1
+          ? `账户“${summary.errors[0]?.username ?? ''}”更新失败`
+          : `全部 ${summary.failed} 个账户更新失败`;
+
+    Alert.alert(title, formatBatchErrorDetails(summary), [{ text: '知道了', style: 'default' }]);
+  };
+
+  const showAccountFailureAlert = (username: string, reason: string) => {
+    Alert.alert(`账户“${username}”更新失败`, reason, [{ text: '知道了', style: 'default' }]);
+  };
 
   const handleCreateAccount = () => {
     exchangeService.reportUiLog('I', 'ui.accounts.openCreate', 'Opening account creation screen');
@@ -56,7 +97,10 @@ export function AccountsScreen() {
               const res = await exchangeService.deleteAccount(account.username);
               if (res.ok) {
                 void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                setFeedbackMessage(`已删除账户“${account.username}”`);
+                setFeedbackBanner({
+                  kind: 'success',
+                  message: `已删除账户“${account.username}”`,
+                });
               } else {
                 Alert.alert('删除失败', res.error.message);
               }
@@ -80,14 +124,27 @@ export function AccountsScreen() {
         void Haptics.notificationAsync(
           res.data.failed === 0
             ? Haptics.NotificationFeedbackType.Success
-            : Haptics.NotificationFeedbackType.Warning,
+            : Haptics.NotificationFeedbackType.Error,
         );
-        setFeedbackMessage(
+        setFeedbackBanner(
           res.data.failed === 0
-            ? `已同步全部 ${res.data.succeeded} 个账户的用量信息`
-            : `同步完成：成功 ${res.data.succeeded} 个，失败 ${res.data.failed} 个`,
+            ? {
+                kind: 'success',
+                message: `已同步全部 ${res.data.succeeded} 个账户的用量信息`,
+              }
+            : {
+                kind: 'error',
+                message: `同步完成：成功 ${res.data.succeeded} 个，失败 ${res.data.failed} 个（点击查看原因）`,
+              },
         );
+        if (res.data.failed > 0) {
+          showFailureSummaryAlert(res.data);
+        }
       } else {
+        setFeedbackBanner({
+          kind: 'error',
+          message: `同步失败：${res.error.message}`,
+        });
         Alert.alert('同步失败', res.error.message);
       }
     })();
@@ -123,25 +180,43 @@ export function AccountsScreen() {
       />
 
       <View style={styles.content}>
-        {feedbackMessage ? (
-          <View
+        {feedbackBanner ? (
+          <Pressable
+            disabled={feedbackBanner.kind !== 'error' || !lastSyncSummary || lastSyncSummary.failed === 0}
+            onPress={() => {
+              if (lastSyncSummary && lastSyncSummary.failed > 0) {
+                showFailureSummaryAlert(lastSyncSummary);
+              }
+            }}
             style={[
               styles.feedbackPill,
               {
-                backgroundColor: palette.successBannerBg,
-                borderColor: palette.successBannerBorder,
+                backgroundColor:
+                  feedbackBanner.kind === 'error'
+                    ? palette.dangerBannerBg
+                    : palette.successBannerBg,
+                borderColor:
+                  feedbackBanner.kind === 'error'
+                    ? palette.dangerBannerBorder
+                    : palette.successBannerBorder,
               },
             ]}
           >
             <SymbolView
-              name="checkmark.circle.fill"
+              name={
+                feedbackBanner.kind === 'error'
+                  ? 'exclamationmark.circle.fill'
+                  : 'checkmark.circle.fill'
+              }
               size={16}
-              tintColor={palette.accentGreen}
+              tintColor={
+                feedbackBanner.kind === 'error' ? palette.accentRed : palette.accentGreen
+              }
             />
             <Text style={[styles.feedbackText, { color: palette.textPrimary }]} numberOfLines={2}>
-              {feedbackMessage}
+              {feedbackBanner.message}
             </Text>
-          </View>
+          </Pressable>
         ) : null}
 
         {accounts.length === 0 ? (
@@ -158,6 +233,14 @@ export function AccountsScreen() {
               const avatarColor = getAvatarColor(account.username);
               const initial = getAvatarInitial(account.username);
               const isLast = index === accounts.length - 1;
+              const isAccountSyncing = syncingUsernames.includes(account.username);
+              const syncError = errorByUsername.get(account.username);
+              const didSucceedInBatch =
+                Boolean(lastSyncSummary) &&
+                !syncError &&
+                account.lastSyncedAt !== null &&
+                !account.isStale &&
+                account.createdAt <= (lastSyncSummary?.completedAt ?? 0);
 
               return (
                 <Pressable
@@ -184,14 +267,50 @@ export function AccountsScreen() {
                       >
                         {account.username}
                       </Text>
-                      {account.isStale ? (
+
+                      {isAccountSyncing ? (
                         <View
                           style={[
-                            styles.staleBadge,
+                            styles.statusBadge,
+                            { backgroundColor: `${palette.themeAccent}20` },
+                          ]}
+                        >
+                          <Text style={[styles.statusBadgeText, { color: palette.themeAccent }]}>
+                            更新中
+                          </Text>
+                        </View>
+                      ) : syncError ? (
+                        <Pressable
+                          onPress={() => showAccountFailureAlert(account.username, syncError)}
+                          hitSlop={6}
+                          style={[
+                            styles.statusBadge,
+                            { backgroundColor: `${palette.accentRed}20` },
+                          ]}
+                        >
+                          <Text style={[styles.statusBadgeText, { color: palette.accentRed }]}>
+                            更新失败
+                          </Text>
+                        </Pressable>
+                      ) : didSucceedInBatch ? (
+                        <View
+                          style={[
+                            styles.statusBadge,
+                            { backgroundColor: `${palette.accentGreen}22` },
+                          ]}
+                        >
+                          <Text style={[styles.statusBadgeText, { color: palette.accentGreen }]}>
+                            更新成功
+                          </Text>
+                        </View>
+                      ) : account.isStale ? (
+                        <View
+                          style={[
+                            styles.statusBadge,
                             { backgroundColor: `${palette.accentOrange}20` },
                           ]}
                         >
-                          <Text style={[styles.staleBadgeText, { color: palette.accentOrange }]}>
+                          <Text style={[styles.statusBadgeText, { color: palette.accentOrange }]}>
                             待更新
                           </Text>
                         </View>
@@ -217,6 +336,21 @@ export function AccountsScreen() {
                     <Text style={[styles.syncTime, { color: palette.textSecondary }]}>
                       用量更新：{formatSyncTimestamp(account.lastSyncedAt)}
                     </Text>
+
+                    {syncError && !isAccountSyncing ? (
+                      <Pressable
+                        onPress={() => showAccountFailureAlert(account.username, syncError)}
+                        hitSlop={4}
+                        style={styles.inlineErrorRow}
+                      >
+                        <Text
+                          style={[styles.inlineErrorText, { color: palette.accentRed }]}
+                          numberOfLines={1}
+                        >
+                          失败原因：{syncError}
+                        </Text>
+                      </Pressable>
+                    ) : null}
                   </View>
 
                   <View style={styles.rowActions}>
@@ -316,14 +450,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flexShrink: 1,
   },
-  staleBadge: {
+  statusBadge: {
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 6,
   },
-  staleBadgeText: {
+  statusBadgeText: {
     fontSize: 10,
     fontWeight: '600',
+  },
+  inlineErrorRow: {
+    marginTop: 2,
+  },
+  inlineErrorText: {
+    fontSize: 11,
+    fontWeight: '500',
   },
   remark: {
     fontSize: 13,
