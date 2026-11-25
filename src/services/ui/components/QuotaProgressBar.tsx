@@ -4,14 +4,69 @@
  *   < 60%: Blue | 60%-80%: Orange | >= 80%: Red
  */
 
-import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useState } from 'react';
+import { type LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
+import Svg, { Line } from 'react-native-svg';
 import type { QuotaUnit } from '@/contracts';
 import {
   formatQuotaNumber,
   getQuotaThresholdColor,
   useIos18Palette,
 } from '../theme/tokens';
+
+const BAR_HEIGHT = 10;
+const LEGEND_DOT_SIZE = 9;
+const STRIPE_STEP = 6;
+const STRIPE_COLOR = 'rgba(255, 255, 255, 0.38)';
+
+function getLockedSegmentDarkColor(percentage: number): string {
+  if (percentage >= 80) {
+    return '#A81B14';
+  }
+  if (percentage >= 60) {
+    return '#AD5B00';
+  }
+  return '#004C9E';
+}
+
+interface DiagonalStripeOverlayProps {
+  width: number;
+  height: number;
+}
+
+function DiagonalStripeOverlay({ width, height }: DiagonalStripeOverlayProps) {
+  const safeWidth = Math.ceil(width);
+  if (safeWidth <= 0 || height <= 0) {
+    return null;
+  }
+
+  const lines: number[] = [];
+  for (let x = -height; x <= safeWidth + STRIPE_STEP; x += STRIPE_STEP) {
+    lines.push(x);
+  }
+
+  return (
+    <Svg
+      width={safeWidth}
+      height={height}
+      viewBox={`0 0 ${safeWidth} ${height}`}
+      style={styles.stripeSvg}
+      pointerEvents="none"
+    >
+      {lines.map((x) => (
+        <Line
+          key={x}
+          x1={x}
+          y1={height + 2}
+          x2={x + height + 4}
+          y2={-2}
+          stroke={STRIPE_COLOR}
+          strokeWidth={2.2}
+        />
+      ))}
+    </Svg>
+  );
+}
 
 interface QuotaProgressBarProps {
   total: number;
@@ -29,6 +84,7 @@ export function QuotaProgressBar({
   showLegend = true,
 }: QuotaProgressBarProps) {
   const palette = useIos18Palette();
+  const [lockedWidthPx, setLockedWidthPx] = useState(0);
 
   const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
   const safeUsed = Number.isFinite(used) && used > 0 ? used : 0;
@@ -42,8 +98,16 @@ export function QuotaProgressBar({
     safeTotal > 0 ? Math.min(Math.max(0, 1 - usedRatio), safeLocked / safeTotal) : 0;
 
   const barColor = getQuotaThresholdColor(percentage, palette);
+  const lockedDarkBg = getLockedSegmentDarkColor(percentage);
   const usedWidthPct = `${(usedRatio * 100).toFixed(2)}%` as `${number}%`;
   const lockedWidthPct = `${(lockedRatio * 100).toFixed(2)}%` as `${number}%`;
+
+  const handleLockedLayout = (event: LayoutChangeEvent) => {
+    const measuredWidth = Math.ceil(event.nativeEvent.layout.width);
+    if (measuredWidth !== lockedWidthPx) {
+      setLockedWidthPx(measuredWidth);
+    }
+  };
 
   return (
     <View style={styles.wrapper}>
@@ -62,16 +126,19 @@ export function QuotaProgressBar({
 
         {lockedRatio > 0 ? (
           <View
+            onLayout={handleLockedLayout}
             style={[
               styles.lockedSegment,
               {
                 width: lockedWidthPct,
-                backgroundColor: `${barColor}48`,
-                borderColor: barColor,
-                borderLeftColor: usedRatio > 0 ? palette.bgCard : barColor,
+                backgroundColor: lockedDarkBg,
+                borderLeftWidth: usedRatio > 0 ? 1.5 : 0,
+                borderLeftColor: palette.bgCard,
               },
             ]}
-          />
+          >
+            <DiagonalStripeOverlay width={lockedWidthPx} height={BAR_HEIGHT} />
+          </View>
         ) : null}
       </View>
 
@@ -91,11 +158,12 @@ export function QuotaProgressBar({
                   style={[
                     styles.lockedDot,
                     {
-                      backgroundColor: `${barColor}48`,
-                      borderColor: barColor,
+                      backgroundColor: lockedDarkBg,
                     },
                   ]}
-                />
+                >
+                  <DiagonalStripeOverlay width={LEGEND_DOT_SIZE} height={LEGEND_DOT_SIZE} />
+                </View>
                 <Text style={[styles.legendText, { color: palette.textSecondary }]}>
                   锁定 {formatQuotaNumber(safeLocked, unit)} {unit}
                 </Text>
@@ -117,8 +185,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   track: {
-    height: 10,
-    borderRadius: 5,
+    height: BAR_HEIGHT,
+    borderRadius: BAR_HEIGHT / 2,
     overflow: 'hidden',
     flexDirection: 'row',
     alignItems: 'stretch',
@@ -128,8 +196,12 @@ const styles = StyleSheet.create({
   },
   lockedSegment: {
     height: '100%',
-    borderWidth: 1,
-    borderLeftWidth: 1.5,
+    overflow: 'hidden',
+  },
+  stripeSvg: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
   },
   legendRow: {
     flexDirection: 'row',
@@ -155,10 +227,10 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   lockedDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 2,
-    borderWidth: 1,
+    width: LEGEND_DOT_SIZE,
+    height: LEGEND_DOT_SIZE,
+    borderRadius: 2.5,
+    overflow: 'hidden',
   },
   legendText: {
     fontSize: 12,
