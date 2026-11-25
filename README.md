@@ -28,7 +28,7 @@ The codebase enforces strict separation across four independent services (see [A
 
 ## Quick Verification Commands (For Humans & Agents)
 
-> **Important:** Target platform is **iOS 26+ in Expo Go** only. Never launch or debug with Expo Web.
+> **Important:** Primary target platform is **iOS 26+ in Expo Go** (with **Android** relaxed for Windows real-device Expo Go debugging). Never launch or debug with Expo Web.
 
 ```bash
 # TypeScript static check
@@ -38,6 +38,6 @@ npx tsc --noEmit
 npx eslint .
 node scripts/check-boundaries.mjs
 
-# Start Expo dev server for iOS Expo Go (no --web)
-npx expo start --ios
+# Start Expo Go dev server for real-device QR debugging on Windows (no --web)
+npm start
 ```

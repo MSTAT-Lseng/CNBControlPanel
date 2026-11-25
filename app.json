@@ -7,7 +7,7 @@
     "icon": "./assets/icon.png",
     "scheme": "cnbpanel",
     "userInterfaceStyle": "automatic",
-    "platforms": ["ios"],
+    "platforms": ["ios", "android"],
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",

@@ -4,7 +4,8 @@
   "main": "expo-router/entry",
   "private": true,
   "scripts": {
-    "start": "expo start --ios",
+    "start": "expo start --go",
+    "android": "expo start --go --android",
     "ios": "expo run:ios",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
