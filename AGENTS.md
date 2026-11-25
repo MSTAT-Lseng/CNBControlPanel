@@ -1,7 +1,7 @@
 # AGENTS.md — Technical Architecture & Implementation Specification
 
 > **Project:** CNB 面板 (`m20.cnb.panel`)  
-> **Target Platform:** iOS 26+ only (No Android, No Web)  
+> **Target Platform:** iOS 26+ primary (Android relaxed for Windows real-device Expo Go debugging; Web strictly forbidden)  
 > **Framework & Runtime:** Expo SDK 58 (React Native 0.88, React 19.3, TypeScript), debugged in **Expo Go**  
 > **Language Policy:** All source code comments, JSDoc blocks, and inline engineering notes **MUST be written in English**.
 
@@ -15,7 +15,7 @@
 - **云原生开发-CPU** (unit: `核时`)
 
 ### Hard Technical Constraints
-1. **iOS 26+ Only:** Configure `"platforms": ["ios"]` in `app.json` and target iOS 26+. Do not write Android or Web compatibility shims or platform branches unless required by an underlying library's TypeScript signature.
+1. **iOS 26+ Primary & Windows Expo Go Compatibility:** Configure `"platforms": ["ios", "android"]` in `app.json` (Android is permitted solely so Windows developers can debug on physical/emulator Expo Go via `npm start` -> `expo start --go` without Xcode; `"web"` is strictly excluded). Do not introduce Web compatibility shims or platform branches unless required by an underlying library's TypeScript signature (such as `md` on `NativeTabs.Trigger.Icon`).
 2. **Expo SDK 58 + Expo Go Compatibility:** Every dependency must be natively bundled in Expo Go SDK 58. Do not introduce custom native Swift/Obj-C modules or plugins that fail in Expo Go (e.g., do **not** enable `requireAuthentication: true` on `expo-secure-store`, and do **not** rely on OS-killed `BGTaskScheduler` background execution that requires a custom dev build).
 3. **Static Verification First & No Web Debugging:**
    - Validate changes using static checks (`npx tsc --noEmit`, ESLint, and automated architectural boundary checks). Avoid dynamic debugging unless strictly unavoidable.
@@ -32,7 +32,7 @@ The application is strictly partitioned into **four independent services** plus 
 ```text
 CNBControlPanel/
 ├── logo.svg                          # Master vector app icon
-├── app.json                          # Expo SDK 58 config (bundleIdentifier: m20.cnb.panel, ios only)
+├── app.json                          # Expo SDK 58 config (bundleIdentifier: m20.cnb.panel, ios + android for Windows Expo Go)
 ├── package.json
 ├── tsconfig.json
 ├── eslint.config.js                  # Enforces service boundary & English-comment/lint rules
@@ -134,23 +134,24 @@ Key domain models:
     devCpu: MetricQuotaGroup;
   }
   ```
-- `AccountRecord`:
+- `AccountProfile` / `AccountView` / `AccountEditorPayload`:
   ```ts
-  export interface AccountRecord {
+  export interface AccountProfile {
     username: string;    // Immutable primary key
-    cookie: string;      // Persisted securely via Storage service
     remark: string;      // Optional user note (empty string when unset)
     createdAt: number;
     updatedAt: number;
     lastSyncedAt: number | null;
   }
+  // AccountSecret stores { cookie, updatedAt } separately via SecureStore.
+  // AccountView exposes maskedCookie + isStale for list UIs; AccountEditorPayload supplies full cookie when editing.
   ```
 - `AppSettings`:
   ```ts
   export interface AppSettings {
     autoRefreshOnLaunch: boolean; // Auto-refresh in background on app activation
     autoRefreshEnabled: boolean;  // Periodic interval auto-refresh toggle
-    autoRefreshIntervalMinutes: number; // Clamped integer >= 1 (default: 15)
+    autoRefreshIntervalMinutes: number; // Clamped integer 1..1440 (default: 15)
   }
   ```
 - `LogLevel`: `'V' | 'I' | 'W' | 'E'`
@@ -238,20 +239,20 @@ Key domain models:
   ```
 - **Resilience:** Maintains a small in-memory pending queue if SQLite is still initializing at cold boot, flushing immediately once the DB handle opens, plus automatic retention cap (e.g., pruning oldest entries beyond 5,000 rows).
 - **CRUD Operations:**
-  - **Create:** `writeLog({ level, source, action, message, details? })`
+  - **Create:** `LogSubsystem.record(...)` / `exchangeService.reportUiLog(...)`
   - **Read:** `queryLogs({ levels?, sources?, search?, limit?, offset? })`
   - **Update:** `updateLog({ id, note?, level?, message? })`
   - **Delete:** `deleteLogs({ ids })` / `clearLogs()`
 
 #### B. Validation & Transactions (`validator.ts` & `transactions.ts`)
 Every transaction validates inputs before invoking `storage` or `parser`, logs start/success/failure, and emits state-change events to subscribed UI hooks:
-1. `listAccounts()` — merges `accounts` metadata + masked/full cookie lookup status as needed by Exchange; returns sanitized `AccountView` (`maskedCookie` for UI lists) or edit payload (`cookie` only when requested for editing).
+1. `listAccounts()` — merges `accounts` metadata + secret presence status; returns sanitized `AccountView` (`maskedCookie` for UI lists), while `getAccountForEdit(username)` returns `AccountEditorPayload` (`cookie` only when requested for editing).
 2. `createAccount({ username, cookie, remark })` — rejects empty `username`/`cookie` or duplicate `username`; persists account metadata + secret cookie.
 3. `updateAccount({ username, cookie, remark })` — rejects `username` modification; updates `cookie` and `remark`.
 4. `deleteAccount({ username })` — removes from `accounts`, `accounts_secrets`, and `usage_cache`.
 5. `syncAccountUsage({ username })` — reads account + cookie from `storage`, calls `parser.parseUsage`, validates returned `UsageSnapshot`, updates `usage_cache` and `lastSyncedAt` in `accounts`.
 6. `syncAllAccountsUsage()` — iterates through all stored accounts sequentially/bounded-concurrently, aggregates per-account successes & failures, and updates state atomically per account.
-7. `getOverviewData()` — reads all accounts + cached snapshots; computes aggregated totals (`remaining`, `total`, `used`, `locked`, `percentage`) for `aiCredits`, `buildCpu`, and `devCpu`, plus `hasStaleAccounts` (`lastSyncedAt === null` or `now - lastSyncedAt > 3_600_000` ms) and `staleUsernames`.
+7. `getOverviewSummary()` — reads all accounts + cached snapshots; computes aggregated totals (`remaining`, `total`, `used`, `locked`, `percentage`) for `aiCredits`, `buildCpu`, and `devCpu`, plus `hasStaleAccounts` (`lastSyncedAt === null` or `now - lastSyncedAt > 3_600_000` ms) and `staleUsernames`.
 8. `getAllUsageSnapshots()` — returns ordered user list paired with their cached `UsageSnapshot | null`.
 9. `getSettings()` / `updateSettings(patch)` — reads/updates `AppSettings`, reconfiguring the auto-refresh scheduler immediately.
 10. `clearCacheAndLogs()` — clears `usage_cache` via `storage.clearTable({ table: 'usage_cache' })`, resets `lastSyncedAt` to `null` on accounts (preserving accounts and settings), and calls `logger.clearLogs()`, then logs a fresh `I` entry confirming the reset.
@@ -267,18 +268,19 @@ Every transaction validates inputs before invoking `storage` or `parser`, logs s
 ### 3.5 User Interface Service (`src/services/ui/`) & Router Shell (`src/app/`)
 
 - **Root Navigation (`src/app/_layout.tsx`)**:
-  - Uses `<Stack>` with `headerShown: false` for `(tabs)` and `headerShown: true` (system native header, iOS 18 non-glass styling: `headerTransparent: false`, explicit opaque iOS 18 background color, `headerBlurEffect: undefined`) for standalone pages (`account-editor`, `logs`).
-  - Initializes `exchangeService.initialize()` once on mount and subscribes cleanly.
+  - Calls `enableLegacyHeaderAppearance()` at module top level so native Stack screens use classic iOS 18 opaque styling on iOS 26+.
+  - Uses `<Stack>` with `headerShown: false` for `(tabs)` and `headerShown: true` (`headerTransparent: false`, `headerTintColor: palette.themeAccent` `#F76945`, explicit opaque `bgCard` background, `headerBlurEffect: undefined`) for standalone pages (`account-editor`, `logs`).
+  - Initializes `exchangeService.initialize()` once on mount via `useExchangeBootstrap()` and subscribes cleanly.
 - **Tab Bar (`src/app/(tabs)/_layout.tsx`)**:
-  - Uses `expo-router/native-tabs` (`NativeTabs`) to get the authentic **iOS 26 Liquid Glass** bottom tab bar with SF Symbols:
-    1. `index` -> Title: `概览`, SF Symbol: `{ default: 'chart.bar', selected: 'chart.bar.fill' }`
-    2. `accounts` -> Title: `账户`, SF Symbol: `{ default: 'person.2', selected: 'person.2.fill' }`
-    3. `usage` -> Title: `用量`, SF Symbol: `{ default: 'gauge.with.dots.needle.33percent', selected: 'gauge.with.dots.needle.67percent' }`
-    4. `settings` -> Title: `设置`, SF Symbol: `{ default: 'gearshape', selected: 'gearshape.fill' }`
+  - Uses `expo-router/native-tabs` (`NativeTabs` with `tintColor={palette.themeAccent}` `#F76945` and `disableAutomaticContentInsets` on each trigger) to get the authentic **iOS 26 Liquid Glass** bottom tab bar with SF Symbols (and required `md` fallback symbols):
+    1. `index` -> Title: `概览`, SF Symbol: `{ default: 'chart.bar', selected: 'chart.bar.fill' }`, MD: `'bar_chart'`
+    2. `accounts` -> Title: `账户`, SF Symbol: `{ default: 'person.2', selected: 'person.2.fill' }`, MD: `'group'`
+    3. `usage` -> Title: `用量`, SF Symbol: `{ default: 'gauge.with.dots.needle.33percent', selected: 'gauge.with.dots.needle.67percent' }`, MD: `'speed'`
+    4. `settings` -> Title: `设置`, SF Symbol: `{ default: 'gearshape', selected: 'gearshape.fill' }`, MD: `'settings'`
 - **Tab Screen Layout Rules**:
   - No `RefreshControl` (pull-to-refresh is strictly disabled on all 4 main tabs).
-  - App Store-inspired inline header inside the scroll view starting cleanly at `insets.top + 8`: large bold title on the left + circular/capsule action button(s) on the right.
-  - ScrollView uses `contentInsetAdjustmentBehavior="automatic"` (or explicit safe bottom padding when needed) so content scrolls cleanly under the Liquid Glass tab bar without hiding final items or creating wasted top whitespace below the Dynamic Island.
+  - App Store-inspired inline header (`AppStoreTabHeader`) inside the scroll view starting cleanly at `insets.top + 8`: large bold title on the left + circular action button(s) (`themeAccent` `#F76945`) on the right.
+  - ScrollView uses `contentInsetAdjustmentBehavior="never"` alongside `disableAutomaticContentInsets` on tab triggers and explicit `paddingBottom: insets.bottom + 84` so content scrolls cleanly under the Liquid Glass tab bar without double top insets or hidden final items.
 - **App Version Retrieval in Expo Go**:
   - Reads `Constants.expoConfig?.version ?? '1.0.0'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
 
@@ -289,10 +291,12 @@ Every transaction validates inputs before invoking `storage` or `parser`, logs s
 1. **Boundary Enforcement (`scripts/check-boundaries.mjs` + ESLint):**
    - Statically parses all `.ts`/`.tsx` imports under `src/`.
    - Fails immediately if `ui` or `app` imports `storage` or `parser`, or if `storage`/`parser` imports `ui`, `exchange`, `app`, or each other.
+   - Also blocks `RefreshControl` in `src/services/ui/screens/` and forbidden glass/blur dependencies (`expo-glass-effect`, `expo-blur`).
 2. **English Comment Audit:**
    - All comments (`//` and `/* ... */`) across `src/` must be in English. UI string literals inside JSX/constants are Chinese.
 3. **Static Quality Gate (Run After Edits):**
    - `npx tsc --noEmit`
-   - `npx eslint .`
+   - `npx eslint . --max-warnings 0`
    - `node scripts/check-boundaries.mjs`
+   - Combined shortcut: `npm run verify`
    - **No Web builds** (`expo start --web` / `expo export --platform web` prohibited).

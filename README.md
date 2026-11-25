@@ -8,7 +8,7 @@ An iOS 26+ utility app built with **Expo SDK 58** and **Expo Go** to manage mult
 
 - **Multi-Account Management:** Add, edit (cookie & remark), delete, and one-tap sync multiple CNB accounts.
 - **Overview Dashboard:** Aggregated remaining, total, used, and locked quota statistics across all accounts, with automatic 1-hour staleness alerts.
-- **Detailed Per-User Quota Breakdown:** Horizontal per-user pages and metric tabs showing individual quota packages (e.g. free tier, student perks) with threshold-colored progress bars (`<60%` Blue, `60%–80%` Orange, `>=80%` Red) and appended locked-quota segments.
+- **Detailed Per-User Quota Breakdown:** Horizontal per-user pages and animated icon metric tabs (`AI Credits`, `构建-CPU`, `开发-CPU`) showing individual quota packages (e.g. free tier, student perks) with threshold-colored progress bars (`<60%` Blue, `60%–80%` Orange, `>=80%` Red) and dark diagonal-striped locked-quota segments.
 - **Settings & Auto-Refresh:** App version & live system time, background refresh on app activation, configurable interval auto-refresh (minutes), cache/log reset, and an isolated Log viewer supporting partial and full clipboard export.
 
 ---
@@ -31,12 +31,8 @@ The codebase enforces strict separation across four independent services (see [A
 > **Important:** Primary target platform is **iOS 26+ in Expo Go** (with **Android** relaxed for Windows real-device Expo Go debugging). Never launch or debug with Expo Web.
 
 ```bash
-# TypeScript static check
-npx tsc --noEmit
-
-# Lint & service-boundary check
-npx eslint .
-node scripts/check-boundaries.mjs
+# TypeScript, ESLint, and service-boundary checks (combined)
+npm run verify
 
 # Start Expo Go dev server for real-device QR debugging on Windows (no --web)
 npm start
