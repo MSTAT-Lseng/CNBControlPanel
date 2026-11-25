@@ -20,6 +20,8 @@ jobs:
     env:
       CI: 'true'
       EXPO_NO_TELEMETRY: '1'
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
 
     steps:
       - name: Checkout repository
@@ -39,7 +41,7 @@ jobs:
           pod --version
 
       - name: Install JavaScript dependencies
-        run: npm ci
+        run: npm install --legacy-peer-deps --no-audit --no-fund
 
       - name: Run static verification gates
         run: npm run verify
@@ -55,7 +57,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          WORKSPACE_PATH=$(find ios -maxdepth 1 -name '*.xcworkspace' | head -n 1)
+          WORKSPACE_PATH=$(find ios -maxdepth 1 -name '*.xcworkspace' -not -name 'Pods.xcworkspace' | head -n 1)
           if [ -z "$WORKSPACE_PATH" ]; then
             echo "Error: No .xcworkspace found in ios/"
             exit 1
