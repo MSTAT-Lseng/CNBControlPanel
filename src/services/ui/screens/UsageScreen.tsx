@@ -206,8 +206,8 @@ export function UsageScreen() {
                 style={[
                   styles.userPill,
                   {
-                    backgroundColor: isSelected ? palette.accentBlue : palette.bgCard,
-                    borderColor: isSelected ? palette.accentBlue : palette.separator,
+                    backgroundColor: isSelected ? palette.themeAccent : palette.bgCard,
+                    borderColor: isSelected ? palette.themeAccent : palette.separator,
                   },
                 ]}
               >

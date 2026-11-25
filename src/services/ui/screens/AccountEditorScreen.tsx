@@ -97,7 +97,7 @@ export function AccountEditorScreen() {
     navigation.setOptions({
       title: isEditMode ? '编辑账户' : '新建账户',
       headerStyle: { backgroundColor: palette.bgCard },
-      headerTintColor: palette.accentBlue,
+      headerTintColor: palette.themeAccent,
       headerTitleStyle: { color: palette.textPrimary },
       headerRight: () => (
         <Pressable
@@ -106,9 +106,9 @@ export function AccountEditorScreen() {
           hitSlop={8}
         >
           {isSaving ? (
-            <ActivityIndicator size="small" color={palette.accentBlue} />
+            <ActivityIndicator size="small" color={palette.themeAccent} />
           ) : (
-            <Text style={[styles.headerSaveText, { color: palette.accentBlue }]}>保存</Text>
+            <Text style={[styles.headerSaveText, { color: palette.themeAccent }]}>保存</Text>
           )}
         </Pressable>
       ),
@@ -128,7 +128,7 @@ export function AccountEditorScreen() {
   if (isLoadingInitial) {
     return (
       <View style={[styles.loadingCenter, { backgroundColor: palette.bgCanvas }]}>
-        <ActivityIndicator size="large" color={palette.accentBlue} />
+        <ActivityIndicator size="large" color={palette.themeAccent} />
       </View>
     );
   }
@@ -199,7 +199,7 @@ export function AccountEditorScreen() {
           <View style={styles.labelWithAction}>
             <Text style={[styles.sectionLabel, { color: palette.textSecondary }]}>认证凭证</Text>
             <Pressable onPress={() => void handlePasteCookie()} hitSlop={8}>
-              <Text style={[styles.pasteAction, { color: palette.accentBlue }]}>从剪贴板粘贴</Text>
+              <Text style={[styles.pasteAction, { color: palette.themeAccent }]}>从剪贴板粘贴</Text>
             </Pressable>
           </View>
           <View style={[styles.groupCard, { backgroundColor: palette.bgCard }]}>
@@ -250,7 +250,7 @@ export function AccountEditorScreen() {
           style={({ pressed }) => [
             styles.submitButton,
             {
-              backgroundColor: palette.accentBlue,
+              backgroundColor: palette.themeAccent,
               opacity: isSaving ? 0.6 : pressed ? 0.85 : 1,
             },
           ]}

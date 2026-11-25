@@ -230,7 +230,7 @@ export function AccountsScreen() {
                         { backgroundColor: palette.bgSecondaryFill, opacity: pressed ? 0.65 : 1 },
                       ]}
                     >
-                      <SymbolView name="pencil" size={14} tintColor={palette.accentBlue} />
+                      <SymbolView name="pencil" size={14} tintColor={palette.themeAccent} />
                     </Pressable>
 
                     <Pressable

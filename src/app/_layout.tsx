@@ -26,7 +26,7 @@ export default function RootLayout() {
     headerStyle: {
       backgroundColor: palette.bgCard,
     },
-    headerTintColor: palette.accentBlue,
+    headerTintColor: palette.themeAccent,
     headerTitleStyle: {
       color: palette.textPrimary,
       fontWeight: '600' as const,

@@ -123,17 +123,17 @@ export function LogsScreen() {
     navigation.setOptions({
       title: '运行日志',
       headerStyle: { backgroundColor: palette.bgCard },
-      headerTintColor: palette.accentBlue,
+      headerTintColor: palette.themeAccent,
       headerTitleStyle: { color: palette.textPrimary },
       headerRight: () => (
         <View style={styles.headerRightRow}>
           <Pressable onPress={handleToggleSelectionMode} hitSlop={8}>
-            <Text style={[styles.headerBtnText, { color: palette.accentBlue }]}>
+            <Text style={[styles.headerBtnText, { color: palette.themeAccent }]}>
               {selectionMode ? '完成' : '选择'}
             </Text>
           </Pressable>
           <Pressable onPress={() => void handleCopyAll()} hitSlop={8}>
-            <Text style={[styles.headerBtnText, { color: palette.accentBlue }]}>复制全部</Text>
+            <Text style={[styles.headerBtnText, { color: palette.themeAccent }]}>复制全部</Text>
           </Pressable>
         </View>
       ),
@@ -197,7 +197,7 @@ export function LogsScreen() {
           {LEVEL_FILTERS.map((item) => {
             const active = item.key === levelFilter;
             const badgeColor =
-              item.key === 'ALL' ? palette.accentBlue : getLogLevelColor(item.key, palette);
+              item.key === 'ALL' ? palette.themeAccent : getLogLevelColor(item.key, palette);
 
             return (
               <Pressable
@@ -289,7 +289,7 @@ export function LogsScreen() {
                 styles.logCard,
                 {
                   backgroundColor: palette.bgCard,
-                  borderColor: isSelected ? palette.accentBlue : 'transparent',
+                  borderColor: isSelected ? palette.themeAccent : 'transparent',
                   borderWidth: isSelected ? 1.5 : 0,
                 },
               ]}
@@ -299,7 +299,7 @@ export function LogsScreen() {
                   <SymbolView
                     name={isSelected ? 'checkmark.circle.fill' : 'circle'}
                     size={20}
-                    tintColor={isSelected ? palette.accentBlue : palette.textTertiary}
+                    tintColor={isSelected ? palette.themeAccent : palette.textTertiary}
                   />
                 ) : null}
 
@@ -354,7 +354,7 @@ export function LogsScreen() {
           ]}
         >
           <Pressable onPress={handleSelectAllVisible} hitSlop={8}>
-            <Text style={[styles.toolbarLink, { color: palette.accentBlue }]}>
+            <Text style={[styles.toolbarLink, { color: palette.themeAccent }]}>
               {selectedIds.size === logs.length && logs.length > 0 ? '取消全选' : '全选当前'}
             </Text>
           </Pressable>
@@ -369,7 +369,7 @@ export function LogsScreen() {
             style={[
               styles.copySelectedBtn,
               {
-                backgroundColor: palette.accentBlue,
+                backgroundColor: palette.themeAccent,
                 opacity: selectedIds.size === 0 ? 0.45 : 1,
               },
             ]}

@@ -15,6 +15,7 @@ export interface Ios18Palette {
   textSecondary: string;
   textTertiary: string;
   separator: string;
+  themeAccent: string;
   accentBlue: string;
   accentOrange: string;
   accentRed: string;
@@ -40,6 +41,7 @@ const LIGHT_PALETTE: Ios18Palette = {
   textSecondary: '#6C6C70',
   textTertiary: '#8E8E93',
   separator: '#C6C6C8',
+  themeAccent: '#F76945',
   accentBlue: '#007AFF',
   accentOrange: '#FF9500',
   accentRed: '#FF3B30',
@@ -65,6 +67,7 @@ const DARK_PALETTE: Ios18Palette = {
   textSecondary: '#98989D',
   textTertiary: '#636366',
   separator: '#38383A',
+  themeAccent: '#F76945',
   accentBlue: '#0A84FF',
   accentOrange: '#FF9F0A',
   accentRed: '#FF453A',

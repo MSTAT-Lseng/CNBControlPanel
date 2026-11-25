@@ -12,7 +12,7 @@ export default function TabsLayout() {
   const palette = useIos18Palette();
 
   return (
-    <NativeTabs tintColor={palette.accentBlue}>
+    <NativeTabs tintColor={palette.themeAccent}>
       <NativeTabs.Trigger name="index" disableAutomaticContentInsets>
         <NativeTabs.Trigger.Label>概览</NativeTabs.Trigger.Label>
         <NativeTabs.Trigger.Icon

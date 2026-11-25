@@ -53,7 +53,7 @@ export function AppStoreTabHeader({ title, subtitle, actions = [] }: AppStoreTab
         {actions.length > 0 ? (
           <View style={styles.actionsRow}>
             {actions.map((action) => {
-              const iconColor = action.tintColor ?? palette.accentBlue;
+              const iconColor = action.tintColor ?? palette.themeAccent;
               const isDisabled = Boolean(action.disabled || action.loading);
               return (
                 <Pressable

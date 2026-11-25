@@ -32,7 +32,7 @@ export function EmptyStateCard({
           { backgroundColor: palette.bgSecondaryFill },
         ]}
       >
-        <SymbolView name={symbol} size={30} tintColor={palette.accentBlue} />
+        <SymbolView name={symbol} size={30} tintColor={palette.themeAccent} />
       </View>
       <Text style={[styles.emptyTitle, { color: palette.textPrimary }]}>{title}</Text>
       <Text style={[styles.emptyDesc, { color: palette.textSecondary }]}>
@@ -44,7 +44,7 @@ export function EmptyStateCard({
           style={({ pressed }) => [
             styles.primaryButton,
             {
-              backgroundColor: palette.accentBlue,
+              backgroundColor: palette.themeAccent,
               opacity: pressed ? 0.8 : 1,
             },
           ]}
