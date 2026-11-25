@@ -4,8 +4,9 @@
  * user pill switcher, followed by a 3-metric segmented control and package breakdown cards.
  */
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
+  Animated,
   FlatList,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -30,13 +31,14 @@ import {
   formatSyncTimestamp,
   getAvatarColor,
   getAvatarInitial,
+  getMetricSymbol,
   useIos18Palette,
 } from '../theme/tokens';
 
 const METRIC_OPTIONS: readonly SegmentOption<QuotaMetricKey>[] = [
-  { key: 'ai_credits', label: 'AI Credits' },
-  { key: 'build_cpu', label: '云原生构建-CPU' },
-  { key: 'dev_cpu', label: '云原生开发-CPU' },
+  { key: 'ai_credits', label: 'AI Credits', symbol: getMetricSymbol('ai_credits') },
+  { key: 'build_cpu', label: '构建-CPU', symbol: getMetricSymbol('build_cpu') },
+  { key: 'dev_cpu', label: '开发-CPU', symbol: getMetricSymbol('dev_cpu') },
 ];
 
 function selectMetricGroup(
@@ -121,9 +123,19 @@ export function UsageScreen() {
 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [selectedMetric, setSelectedMetric] = useState<QuotaMetricKey>('ai_credits');
+  const [metricContentAnim] = useState(() => new Animated.Value(1));
   const pagerRef = useRef<FlatList<UserUsageEntry>>(null);
 
   const activeIndex = usageList.length > 0 ? Math.min(selectedIndex, usageList.length - 1) : 0;
+
+  useEffect(() => {
+    metricContentAnim.setValue(0);
+    Animated.timing(metricContentAnim, {
+      toValue: 1,
+      duration: 200,
+      useNativeDriver: true,
+    }).start();
+  }, [selectedMetric, metricContentAnim]);
 
   const handleSelectUser = (index: number) => {
     setSelectedIndex(index);
@@ -275,7 +287,22 @@ export function UsageScreen() {
                   onAction={navigateToAccounts}
                 />
               ) : (
-                <>
+                <Animated.View
+                  style={[
+                    styles.animatedMetricBody,
+                    {
+                      opacity: metricContentAnim,
+                      transform: [
+                        {
+                          translateY: metricContentAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [6, 0],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                >
                   <View style={[styles.userMetaRow, { backgroundColor: palette.bgCard }]}>
                     <Text style={[styles.userMetaText, { color: palette.textSecondary }]}>
                       {group.label} · {group.packages.length} 个额度包（{group.unit}）
@@ -290,7 +317,7 @@ export function UsageScreen() {
                       <PackageCard key={pkg.id} pkg={pkg} />
                     ))}
                   </View>
-                </>
+                </Animated.View>
               )}
             </ScrollView>
           );
@@ -360,6 +387,9 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   packagesList: {
+    gap: 12,
+  },
+  animatedMetricBody: {
     gap: 12,
   },
   packageCard: {

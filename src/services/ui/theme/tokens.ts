@@ -3,7 +3,8 @@
  */
 
 import { useColorScheme } from 'react-native';
-import type { LogLevel, QuotaUnit } from '@/contracts';
+import type { SFSymbol } from 'expo-symbols';
+import type { LogLevel, QuotaMetricKey, QuotaUnit } from '@/contracts';
 
 export interface Ios18Palette {
   isDark: boolean;
@@ -131,6 +132,20 @@ export function getQuotaThresholdColor(percentage: number, palette: Ios18Palette
     return palette.accentOrange;
   }
   return palette.accentBlue;
+}
+
+/**
+ * Returns the SF Symbol associated with a quota metric across Overview and Usage screens.
+ */
+export function getMetricSymbol(metric: QuotaMetricKey): SFSymbol {
+  switch (metric) {
+    case 'ai_credits':
+      return 'sparkles';
+    case 'build_cpu':
+      return 'hammer.fill';
+    case 'dev_cpu':
+      return 'cpu.fill';
+  }
 }
 
 /**

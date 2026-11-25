@@ -4,21 +4,10 @@
 
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { SymbolView, type SFSymbol } from 'expo-symbols';
-import type { MetricAggregateSummary, QuotaMetricKey } from '@/contracts';
-import { formatQuotaNumber, useIos18Palette } from '../theme/tokens';
+import { SymbolView } from 'expo-symbols';
+import type { MetricAggregateSummary } from '@/contracts';
+import { formatQuotaNumber, getMetricSymbol, useIos18Palette } from '../theme/tokens';
 import { QuotaProgressBar } from './QuotaProgressBar';
-
-function getMetricIcon(metric: QuotaMetricKey): SFSymbol {
-  switch (metric) {
-    case 'ai_credits':
-      return 'sparkles';
-    case 'build_cpu':
-      return 'hammer.fill';
-    case 'dev_cpu':
-      return 'cpu.fill';
-  }
-}
 
 interface MetricSummaryCardProps {
   summary: MetricAggregateSummary;
@@ -38,7 +27,7 @@ export function MetricSummaryCard({ summary }: MetricSummaryCardProps) {
             ]}
           >
             <SymbolView
-              name={getMetricIcon(summary.metric)}
+              name={getMetricSymbol(summary.metric)}
               size={16}
               tintColor={palette.brandOrange}
             />
