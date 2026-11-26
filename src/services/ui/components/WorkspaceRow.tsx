@@ -5,6 +5,7 @@
 import React from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
+import Svg, { Circle, Path } from 'react-native-svg';
 import type { WorkspaceSummary } from '@/contracts';
 import { useIos18Palette } from '../theme/tokens';
 import {
@@ -17,6 +18,22 @@ interface WorkspaceRowProps {
   item: WorkspaceSummary;
   onPress: (item: WorkspaceSummary) => void;
   showTopDivider?: boolean;
+}
+
+function BranchIcon({ color }: { color: string }) {
+  return (
+    <Svg width={12} height={12} viewBox="0 0 16 16" fill="none">
+      <Circle cx={4.5} cy={3.5} r={1.8} stroke={color} strokeWidth={1.4} />
+      <Circle cx={4.5} cy={12.5} r={1.8} stroke={color} strokeWidth={1.4} />
+      <Circle cx={11.5} cy={4.5} r={1.8} stroke={color} strokeWidth={1.4} />
+      <Path
+        d="M4.5 5.3V10.7M11.5 6.3C11.5 8.8 9 9.5 4.5 9.5"
+        stroke={color}
+        strokeWidth={1.4}
+        strokeLinecap="round"
+      />
+    </Svg>
+  );
 }
 
 export function WorkspaceRow({
@@ -42,6 +59,11 @@ export function WorkspaceRow({
     >
       <View style={styles.mainCol}>
         <View style={styles.topLine}>
+          <View style={[styles.statusBadge, { backgroundColor: lifecycle.bgColor }]}>
+            <Text style={[styles.statusBadgeText, { color: lifecycle.color }]}>
+              {lifecycle.label}
+            </Text>
+          </View>
           <Text
             numberOfLines={1}
             style={[styles.slugText, { color: palette.textPrimary }]}
@@ -49,7 +71,8 @@ export function WorkspaceRow({
             {item.slug || '未知仓库'}
           </Text>
           {item.branch ? (
-            <View style={[styles.branchPill, { backgroundColor: palette.bgSecondaryFill }]}>
+            <View style={styles.branchInline}>
+              <BranchIcon color={palette.textSecondary} />
               <Text
                 numberOfLines={1}
                 style={[styles.branchText, { color: palette.textSecondary }]}
@@ -64,11 +87,6 @@ export function WorkspaceRow({
           <Text numberOfLines={1} style={[styles.snText, { color: palette.textTertiary }]}>
             {item.sn}
           </Text>
-          <View style={[styles.statusBadge, { backgroundColor: lifecycle.bgColor }]}>
-            <Text style={[styles.statusBadgeText, { color: lifecycle.color }]}>
-              {lifecycle.label}
-            </Text>
-          </View>
         </View>
 
         <View style={styles.metaLine}>
@@ -119,20 +137,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flexShrink: 1,
   },
-  branchPill: {
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
+  branchInline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
     maxWidth: 110,
+    flexShrink: 0,
   },
   branchText: {
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: '500',
+    flexShrink: 1,
   },
   midLine: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
   },
   snText: {
     fontSize: 12,
@@ -143,6 +162,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
+    flexShrink: 0,
   },
   statusBadgeText: {
     fontSize: 11,
