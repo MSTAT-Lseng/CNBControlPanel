@@ -110,7 +110,7 @@ Used at the top of `概览`, `账户`, `用量`, and `设置`:
    - **Summary Overview Cards (3 Vertical Cards):**
      1. **AI Credits** (icon: `sparkles`, unit: `Credits`)
      2. **云原生构建-CPU** (icon: `hammer.fill`, unit: `核时`)
-     3. **云原生开发-CPU** (icon: `cpu.fill`, unit: `核时`, interactive card with subtle trailing chevron `chevron.right` — tapping pushes standalone `workspaces` page)
+     3. **云原生开发-CPU** (icon: `cpu.fill`, unit: `核时`, interactive card with inline `chevron.right` beside the title and subtitle `点击查看容器历史` — darkens background via `${bgSecondaryFill}66` on press without dimming content, and tapping pushes standalone `workspaces` page)
    - Each card displays:
      - Header: Metric icon + title + package count on the left; `剩余可用` value + unit in bold tabular numerals on the right.
      - `QuotaProgressBar` + overall percentage (`XX.X%`).
@@ -155,7 +155,7 @@ Used at the top of `概览`, `账户`, `用量`, and `设置`:
 ### 5.4 设置 (Settings Tab — `settings`)
 Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top to bottom:
 1. **Section 1 — 应用信息:**
-   - Row 1: `App 版本` — trailing value `v1.0.0` (from `Constants.expoConfig.version`)
+   - Row 1: `App 版本` — trailing value `v1.0.1` (from `Constants.expoConfig.version`)
    - Row 2: `当前系统时间` — trailing live-updating value (`YYYY-MM-DD HH:mm:ss`, tabular numerals)
 2. **Section 2 — 刷新策略:**
    - Row 1: `启用应用时后台自动刷新用量` — trailing iOS `<Switch>`
@@ -164,7 +164,7 @@ Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top 
 3. **Section 3 — 诊断日志:**
    - Row 1: `运行日志 (Log)` — trailing `查看 >` disclosure indicator; pushes standalone `logs` page
 4. **Section 4 — 数据清理:**
-   - Row 1: `清除缓存和 Log 数据` — centered destructive red (`#FF3B30`) button; shows native iOS `Alert.alert` confirmation before clearing usage cache & all logs (accounts and settings remain intact).
+   - Row 1: `清除缓存和 Log 数据` — centered destructive red (`#FF3B30`) button; shows native iOS `Alert.alert` confirmation before clearing usage/workspace caches & all logs (accounts and settings remain intact).
 
 ---
 
@@ -203,9 +203,11 @@ Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top 
 - **Entry & Navigation Header:** Pushed when tapping the **云原生开发-CPU** card on `概览`. Uses system native `<Stack>` header (`headerShown: true`, opaque iOS 18 style, `headerTintColor: themeAccent` `#F76945`, title `"云原生开发"`, native back button, right native refresh button `arrow.triangle.2.circlepath`).
 - **Per-User Recent Containers (Max 5 per User):**
   - Renders one iOS 18 inset grouped section card per stored account (`username`, plus conditional `accentOrange` notice when `ownerMismatch` is true).
-  - Displays up to **5** most recent container entries for that user: repository `slug` + `branch`, monospace `sn`, lifecycle badge (`运行中` green / `已关闭` gray), creation time (`Asia/Shanghai`), duration, `fileCount`, and trailing chevron `chevron.right`.
-  - **Container Tap:** Tapping any container row pushes `workspace-logs` for that container.
-  - **View More ("查看更多"):** Each user section provides a trailing/footer **"查看更多"** action (`chevron.right`, `themeAccent`) that pushes `workspace-history` scoped to that user to load additional entries.
+  - Displays up to **5** most recent container entries for that user with 3-line rows + trailing `chevron.right`:
+    - Line 1: Lifecycle badge (`运行中` green / `已关闭` gray) on the far left, followed by repository `slug`, then a plain unboxed branch indicator (git branch SVG icon + gray `branch` text, no background pill).
+    - Line 2: Monospace `sn` container ID only.
+    - Line 3: Creation time (`Asia/Shanghai`), duration, and `fileCount`.
+  - **Press Feedback & Container Tap:** Pressing any container row or the **"查看更多"** footer row darkens its background (`${bgSecondaryFill}66`) while keeping text/badges crisp (matching `账户` list rows); tapping a container pushes `workspace-logs`, and tapping **"查看更多"** (`chevron.right`, `themeAccent`) pushes `workspace-history` scoped to that user.
 
 ---
 
@@ -220,8 +222,8 @@ Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top 
 
 ### 5.9 容器构建日志独立页面 (`workspace-logs`)
 - **Entry & Navigation Header:** Pushed when tapping an individual container row from `workspaces` or `workspace-history`. Uses system native `<Stack>` header (`headerShown: true`, opaque iOS 18 style, `headerTintColor: themeAccent` `#F76945`, title `"构建日志"`, native back button, optional right header refresh button).
-- **Summary & Metadata Card:** Displays build result badge (`成功` green / `失败` red / `排队中` orange), trigger event, commit SHA, duration, resource/billing specs (`image`, `cpus`, `metricCoreHours`), AI usage (`totalTokens`, `Credits`), and a muted notice when logs exceed the 7-day retention window (`logRetentionDays`).
+- **Summary & Metadata Card:** Displays build result badge (`成功` green / `失败` red / `构建中` orange / `已跳过` gray), trigger event, commit SHA, duration, resource/billing specs (`image`, `cpus`, `metricCoreHours`), AI usage (`totalTokens`, `Credits`), and a muted notice when logs exceed the 7-day retention window (`logRetentionDays`).
 - **Pipeline Configuration Summary (Optional):** Displays structural fields (`镜像`, `stages`, `env` 键名) with explicit omission of raw `env` values.
 - **Stage List & On-Demand Raw Output:**
-  - Lists pipeline stages in canonical order (`Prepare` → custom stages → `BeforeEnd` → `End` → `DebugDetection`) with status badges and durations.
-  - Expanding or selecting a stage loads its sanitized plain-text `lines` on demand in a monospace viewer (`selectable`), with summary truncation for oversized stages and one-tap clipboard copy (`expo-clipboard`).
+  - Lists pipeline stages in canonical order (`Prepare` → custom stages → `BeforeEnd` → `DebugDetection` → `End`) with status badges, durations, and symmetric `12pt` top/bottom row spacing inside hairline dividers.
+  - Expanding a stage loads its sanitized plain-text `lines` on demand in a horizontally scrollable monospace viewer (`selectable`). Stages over `40` lines default to a collapsed summary (first `15` + omitted-count notice + last `20` lines); tapping **`展开全部`** expands vertically without height clipping to display all lines, **`收起摘要`** restores the summary, and **`复制本阶段`** copies the full stage log (`expo-clipboard`).

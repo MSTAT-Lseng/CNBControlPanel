@@ -84,7 +84,10 @@ CNBControlPanel/
         │       ├── index.ts
         │       └── logDatabase.ts
         └── workspace-parser/         # [Service 5] Cloud Native Dev Parser Service
-            └── index.ts              # Exposes createWorkspaceParserService(logger) -> WorkspaceParserPort
+            ├── index.ts              # Exposes createWorkspaceParserService(logger) -> WorkspaceParserPort
+            ├── httpClient.ts
+            ├── sanitizer.ts
+            └── workspaceApi.ts
 ```
 
 ### Dependency & Access Matrix (Strictly Enforced)
@@ -283,7 +286,7 @@ Every transaction validates inputs before invoking `storage`, `parser`, or `work
 6. `syncAllAccountsUsage()` — iterates through all stored accounts sequentially/bounded-concurrently, aggregates per-account successes & failures, and updates state atomically per account.
 7. `getOverviewSummary()` — reads all accounts + cached snapshots; computes aggregated totals (`remaining`, `total`, `used`, `locked`, `percentage`) for `aiCredits`, `buildCpu`, and `devCpu`, plus `hasStaleAccounts` (`lastSyncedAt === null` or `now - lastSyncedAt > 3_600_000` ms) and `staleUsernames`.
 8. `getAllUsageSnapshots()` — returns ordered user list paired with their cached `UsageSnapshot | null`.
-9. `syncAccountWorkspaces({ username, page?, pageSize?, status?, slug?, branch? })` / `getCachedWorkspaces(username)` — resolves account credentials via `storage`, invokes `workspaceParser.parseWorkspaceList`, caches page 1 (`pageSize: 5` default preview) in `workspace_cache`, and exposes `hasMore` + `ownerMismatch` metadata for `"查看更多"` pagination.
+9. `syncAccountWorkspaces({ username, page?, pageSize?, status?, slug?, branch? })` / `getCachedWorkspaces(username)` — resolves account credentials via `storage`, invokes `workspaceParser.parseWorkspaceList`, caches unfiltered page-1 snapshots in `workspace_cache`, and exposes `hasMore` + `ownerMismatch` metadata for `"查看更多"` pagination.
 10. `getWorkspaceBuildLog({ username, slug, sn, includeConfig? })` / `getWorkspaceStageLog({ username, slug, sn, pipelineId, stageId, status? })` — resolves account credentials via `storage` and delegates to `workspaceParser` for on-demand container build detail and stage output retrieval.
 11. `getSettings()` / `updateSettings(patch)` — reads/updates `AppSettings`, reconfiguring the auto-refresh scheduler immediately.
 12. `clearCacheAndLogs()` — clears `usage_cache` and `workspace_cache` via `storage.clearTable(...)`, resets `lastSyncedAt` to `null` on accounts (preserving accounts and settings), and calls `logger.clearLogs()`, then logs a fresh `I` entry confirming the reset.
@@ -317,7 +320,7 @@ Every transaction validates inputs before invoking `storage`, `parser`, or `work
   - Tapping `"查看更多"` pushes `workspace-history` for that account to load paginated older containers.
   - Tapping any container row in either `workspaces` or `workspace-history` pushes `workspace-logs` to inspect the full build summary and stage logs.
 - **App Version Retrieval in Expo Go**:
-  - Reads `Constants.expoConfig?.version ?? '1.0.0'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
+  - Reads `Constants.expoConfig?.version ?? '1.0.1'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
 
 ---
 
