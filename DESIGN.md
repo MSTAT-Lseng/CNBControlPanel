@@ -24,7 +24,7 @@
 4. **No Pull-to-Refresh on Main Tabs:**
    - None of the 4 main tabs (`概览`, `账户`, `用量`, `设置`) attach a `RefreshControl`. Data synchronization is triggered explicitly from the `账户` tab or via Settings auto-refresh.
 5. **Standalone Pages Use System Native Headers:**
-   - Independent pages (`新建账户` / `编辑账户` and `运行日志`) push onto the root `<Stack>` above the tab bar with `headerShown: true`, `headerTransparent: false`, opaque iOS 18 `headerStyle`, native back button, and native right header action button(s).
+   - Independent pages (`新建账户` / `编辑账户`, `云原生开发容器`, `更多容器`, `构建日志`, and `运行日志`) push onto the root `<Stack>` above the tab bar with `headerShown: true`, `headerTransparent: false`, opaque iOS 18 `headerStyle`, native back button, and native right header action button(s).
 
 ---
 
@@ -110,7 +110,7 @@ Used at the top of `概览`, `账户`, `用量`, and `设置`:
    - **Summary Overview Cards (3 Vertical Cards):**
      1. **AI Credits** (icon: `sparkles`, unit: `Credits`)
      2. **云原生构建-CPU** (icon: `hammer.fill`, unit: `核时`)
-     3. **云原生开发-CPU** (icon: `cpu.fill`, unit: `核时`)
+     3. **云原生开发-CPU** (icon: `cpu.fill`, unit: `核时`, interactive card with subtle trailing chevron `chevron.right` — tapping pushes standalone `workspaces` page)
    - Each card displays:
      - Header: Metric icon + title + package count on the left; `剩余可用` value + unit in bold tabular numerals on the right.
      - `QuotaProgressBar` + overall percentage (`XX.X%`).
@@ -193,6 +193,35 @@ Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top 
     - `E` (Error): `#FF3B30` Red
   - Search input (`搜索操作、消息或详情`) directly below the level pills.
 - **Log List & Selection Copy:**
-  - Displays timestamp (`HH:mm:ss.SSS`), level pill (`V`/`I`/`W`/`E`), service source (`UI`/`Storage`/`Parser`/`Exchange`), action, and message/details (`selectable` text).
+  - Displays timestamp (`HH:mm:ss.SSS`), level pill (`V`/`I`/`W`/`E`), service source (`UI`/`Storage`/`Parser`/`WorkspaceParser`/`Exchange`), action, and message/details (`selectable` text).
   - **Partial Copy:** Entering selection mode shows iOS circular checkboxes on each log row; a bottom action bar appears showing `"已选 N 条"` + **复制所选** button (`expo-clipboard`). Users can also long-press any single log entry to copy that entry immediately.
   - **Copy All:** Tapping **复制全部** copies all currently filtered/loaded formatted logs to the system clipboard with haptic + visual confirmation.
+
+---
+
+### 5.7 云原生开发容器概览独立页面 (`workspaces`)
+- **Entry & Navigation Header:** Pushed when tapping the **云原生开发-CPU** card on `概览`. Uses system native `<Stack>` header (`headerShown: true`, opaque iOS 18 style, `headerTintColor: themeAccent` `#F76945`, title `"云原生开发"`, native back button, right native refresh button `arrow.triangle.2.circlepath`).
+- **Per-User Recent Containers (Max 5 per User):**
+  - Renders one iOS 18 inset grouped section card per stored account (`username`, plus conditional `accentOrange` notice when `ownerMismatch` is true).
+  - Displays up to **5** most recent container entries for that user: repository `slug` + `branch`, monospace `sn`, lifecycle badge (`运行中` green / `已关闭` gray), creation time (`Asia/Shanghai`), duration, `fileCount`, and trailing chevron `chevron.right`.
+  - **Container Tap:** Tapping any container row pushes `workspace-logs` for that container.
+  - **View More ("查看更多"):** Each user section provides a trailing/footer **"查看更多"** action (`chevron.right`, `themeAccent`) that pushes `workspace-history` scoped to that user to load additional entries.
+
+---
+
+### 5.8 更多容器列表独立页面 (`workspace-history`)
+- **Entry & Navigation Header:** Pushed from **"查看更多"** on `workspaces`. Uses system native `<Stack>` header (`headerShown: true`, opaque iOS 18 style, `headerTintColor: themeAccent` `#F76945`, title `"容器历史"` / `username`, native back button, right native refresh button).
+- **Filter & Paginated List:**
+  - Top iOS 18 3-segment lifecycle filter (`全部` / `运行中` / `已关闭`) and optional `ownerMismatch` banner.
+  - Paginated list loading older container entries (`加载更多` footer button / incremental pagination when `hasMore` exists).
+  - Tapping any container row pushes `workspace-logs` to view its full build log.
+
+---
+
+### 5.9 容器构建日志独立页面 (`workspace-logs`)
+- **Entry & Navigation Header:** Pushed when tapping an individual container row from `workspaces` or `workspace-history`. Uses system native `<Stack>` header (`headerShown: true`, opaque iOS 18 style, `headerTintColor: themeAccent` `#F76945`, title `"构建日志"`, native back button, optional right header refresh button).
+- **Summary & Metadata Card:** Displays build result badge (`成功` green / `失败` red / `排队中` orange), trigger event, commit SHA, duration, resource/billing specs (`image`, `cpus`, `metricCoreHours`), AI usage (`totalTokens`, `Credits`), and a muted notice when logs exceed the 7-day retention window (`logRetentionDays`).
+- **Pipeline Configuration Summary (Optional):** Displays structural fields (`镜像`, `stages`, `env` 键名) with explicit omission of raw `env` values.
+- **Stage List & On-Demand Raw Output:**
+  - Lists pipeline stages in canonical order (`Prepare` → custom stages → `BeforeEnd` → `End` → `DebugDetection`) with status badges and durations.
+  - Expanding or selecting a stage loads its sanitized plain-text `lines` on demand in a monospace viewer (`selectable`), with summary truncation for oversized stages and one-tap clipboard copy (`expo-clipboard`).
