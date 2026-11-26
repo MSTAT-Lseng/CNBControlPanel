@@ -1,6 +1,7 @@
 /**
  * Transaction coordinator for the Update Exchange Service.
- * Mediates all workflows across UI, Information Storage, Usage Parser, and Log Subsystem.
+ * Mediates all workflows across UI, Information Storage, Usage Parser,
+ * Workspace Parser, and Log Subsystem.
  */
 
 import type {
@@ -11,6 +12,7 @@ import type {
   AppSettings,
   BatchSyncSummary,
   CreateAccountInput,
+  ErrorCode,
   ExchangeUiState,
   LogReporter,
   MetricAggregateSummary,
@@ -24,6 +26,13 @@ import type {
   UpdateAccountInput,
   UsageSnapshot,
   UserUsageEntry,
+  WorkspaceBuildLogDetail,
+  WorkspaceBuildLogQueryInput,
+  WorkspaceListSnapshot,
+  WorkspaceParserPort,
+  WorkspaceStageLog,
+  WorkspaceStageLogQueryInput,
+  WorkspaceSyncInput,
 } from '@/contracts';
 import type { LogSubsystem } from './logger';
 import {
@@ -34,11 +43,16 @@ import {
   validateCreateAccount,
   validateUpdateAccount,
   validateUsageSnapshot,
+  validateWorkspaceBuildLogQuery,
+  validateWorkspaceListSnapshot,
+  validateWorkspaceStageLogQuery,
+  validateWorkspaceSyncInput,
 } from './validator';
 
 const TABLE_ACCOUNTS = 'accounts';
 const TABLE_SECRETS = 'accounts_secrets';
 const TABLE_USAGE_CACHE = 'usage_cache';
+const TABLE_WORKSPACE_CACHE = 'workspace_cache';
 const TABLE_SETTINGS = 'settings';
 const KEY_APP_SETTINGS = 'app_settings';
 
@@ -46,17 +60,7 @@ function ok<T>(data: T): ServiceResult<T> {
   return { ok: true, data, timestamp: Date.now() };
 }
 
-function fail<T>(
-  code:
-    | 'VALIDATION_ERROR'
-    | 'NOT_FOUND'
-    | 'ALREADY_EXISTS'
-    | 'STORAGE_ERROR'
-    | 'PARSER_ERROR'
-    | 'EXCHANGE_ERROR',
-  message: string,
-  cause?: string,
-): ServiceResult<T> {
+function fail<T>(code: ErrorCode, message: string, cause?: string): ServiceResult<T> {
   return {
     ok: false,
     error: { code, message, cause },
@@ -135,6 +139,7 @@ function finalizeMetricSummary(summary: MetricAggregateSummary): MetricAggregate
 export class ExchangeCoordinator {
   private readonly storage: StoragePort;
   private readonly parser: ParserPort;
+  private readonly workspaceParser: WorkspaceParserPort;
   private readonly logSubsystem: LogSubsystem;
   private readonly logger: LogReporter;
   private readonly listeners = new Set<(state: ExchangeUiState) => void>();
@@ -154,9 +159,15 @@ export class ExchangeCoordinator {
   private activeBatchSyncPromise: Promise<ServiceResult<BatchSyncSummary>> | null = null;
   private onSettingsChanged?: (settings: AppSettings) => void;
 
-  constructor(storage: StoragePort, parser: ParserPort, logSubsystem: LogSubsystem) {
+  constructor(
+    storage: StoragePort,
+    parser: ParserPort,
+    workspaceParser: WorkspaceParserPort,
+    logSubsystem: LogSubsystem,
+  ) {
     this.storage = storage;
     this.parser = parser;
+    this.workspaceParser = workspaceParser;
     this.logSubsystem = logSubsystem;
     this.logger = logSubsystem.createReporter('Exchange');
   }
@@ -376,24 +387,31 @@ export class ExchangeCoordinator {
 
     this.logger.verbose('exchange.deleteAccount', `Deleting account "${cleanUsername}"`);
 
-    const [profileRemove, secretRemove, cacheRemove] = await Promise.all([
+    const [profileRemove, secretRemove, usageCacheRemove, workspaceCacheRemove] = await Promise.all([
       this.storage.remove({ table: TABLE_ACCOUNTS, key: cleanUsername }),
       this.storage.remove({ table: TABLE_SECRETS, key: cleanUsername }),
       this.storage.remove({ table: TABLE_USAGE_CACHE, key: cleanUsername }),
+      this.storage.remove({ table: TABLE_WORKSPACE_CACHE, key: cleanUsername }),
     ]);
 
-    if (!profileRemove.ok || !secretRemove.ok || !cacheRemove.ok) {
+    if (
+      !profileRemove.ok ||
+      !secretRemove.ok ||
+      !usageCacheRemove.ok ||
+      !workspaceCacheRemove.ok
+    ) {
       const msg =
         (!profileRemove.ok && profileRemove.error.message) ||
         (!secretRemove.ok && secretRemove.error.message) ||
-        (!cacheRemove.ok && cacheRemove.error.message) ||
+        (!usageCacheRemove.ok && usageCacheRemove.error.message) ||
+        (!workspaceCacheRemove.ok && workspaceCacheRemove.error.message) ||
         'Failed to remove account records';
       this.logger.error('exchange.deleteAccount', `Partial failure deleting "${cleanUsername}"`, msg);
       return fail('STORAGE_ERROR', msg);
     }
 
     await this.rebuildStateSnapshot();
-    this.logger.info('exchange.deleteAccount', `Deleted account "${cleanUsername}" and its cached usage`);
+    this.logger.info('exchange.deleteAccount', `Deleted account "${cleanUsername}" and its cached data`);
     return ok({ deleted: profileRemove.data.deleted });
   }
 
@@ -405,31 +423,12 @@ export class ExchangeCoordinator {
 
     this.markSyncingUser(cleanUsername, true);
     try {
-      const profileRes = await this.storage.read<AccountProfile>({
-        table: TABLE_ACCOUNTS,
-        key: cleanUsername,
-      });
-      if (!profileRes.ok) {
-        return fail('STORAGE_ERROR', profileRes.error.message, profileRes.error.cause);
-      }
-      if (!profileRes.data.exists || !profileRes.data.value) {
-        return fail('NOT_FOUND', `账户 "${cleanUsername}" 不存在`);
+      const credRes = await this.resolveAccountCredentials(cleanUsername, 'exchange.syncAccountUsage');
+      if (!credRes.ok) {
+        return fail(credRes.error.code, credRes.error.message, credRes.error.cause);
       }
 
-      const secretRes = await this.storage.read<AccountSecret>({
-        table: TABLE_SECRETS,
-        key: cleanUsername,
-      });
-      if (!secretRes.ok) {
-        return fail('STORAGE_ERROR', secretRes.error.message, secretRes.error.cause);
-      }
-
-      const cookie = secretRes.data.value?.cookie ?? '';
-      if (!cookie.trim()) {
-        this.logger.warn('exchange.syncAccountUsage', `Missing cookie for "${cleanUsername}"`);
-        return fail('VALIDATION_ERROR', `账户 "${cleanUsername}" 的 Cookie 缺失，请重新编辑`);
-      }
-
+      const { profile, cookie } = credRes.data;
       this.logger.verbose('exchange.syncAccountUsage', `Dispatching parser for "${cleanUsername}"`);
       const parseRes = await this.parser.parseUsage({ username: cleanUsername, cookie });
       if (!parseRes.ok) {
@@ -462,7 +461,7 @@ export class ExchangeCoordinator {
       }
 
       const updatedProfile: AccountProfile = {
-        ...profileRes.data.value,
+        ...profile,
         lastSyncedAt: snapshot.fetchedAt,
       };
       const profileSaveRes = await this.storage.save({
@@ -601,15 +600,232 @@ export class ExchangeCoordinator {
     return ok(next);
   }
 
+  async getCachedWorkspaces(username: string): Promise<ServiceResult<WorkspaceListSnapshot | null>> {
+    const cleanUsername = username.trim();
+    if (!cleanUsername) {
+      return fail('VALIDATION_ERROR', '用户名不能为空');
+    }
+
+    const readRes = await this.storage.read<WorkspaceListSnapshot>({
+      table: TABLE_WORKSPACE_CACHE,
+      key: cleanUsername,
+    });
+    if (!readRes.ok) {
+      return fail('STORAGE_ERROR', readRes.error.message, readRes.error.cause);
+    }
+    if (!readRes.data.exists || !readRes.data.value) {
+      return ok(null);
+    }
+
+    const validated = validateWorkspaceListSnapshot(readRes.data.value);
+    if (!validated.valid || !validated.value) {
+      this.logger.warn(
+        'exchange.getCachedWorkspaces',
+        `Discarding malformed cached workspace snapshot for "${cleanUsername}"`,
+        validated.message,
+      );
+      return ok(null);
+    }
+
+    return ok(validated.value);
+  }
+
+  async syncAccountWorkspaces(
+    input: WorkspaceSyncInput,
+  ): Promise<ServiceResult<WorkspaceListSnapshot>> {
+    const validatedInput = validateWorkspaceSyncInput(input);
+    if (!validatedInput.valid || !validatedInput.value) {
+      this.logger.warn(
+        'exchange.syncAccountWorkspaces',
+        'Workspace sync input validation failed',
+        validatedInput.message,
+      );
+      return fail('VALIDATION_ERROR', validatedInput.message ?? 'Invalid workspace query');
+    }
+
+    const { username, page, pageSize, status, slug, branch } = validatedInput.value;
+    const credRes = await this.resolveAccountCredentials(
+      username,
+      'exchange.syncAccountWorkspaces',
+    );
+    if (!credRes.ok) {
+      return fail(credRes.error.code, credRes.error.message, credRes.error.cause);
+    }
+
+    this.logger.verbose(
+      'exchange.syncAccountWorkspaces',
+      `Dispatching workspace parser for "${username}" (page=${page}, pageSize=${pageSize}, status=${status || 'all'})`,
+    );
+
+    const parseRes = await this.workspaceParser.parseWorkspaceList({
+      username,
+      cookie: credRes.data.cookie,
+      page,
+      pageSize,
+      status,
+      slug,
+      branch,
+    });
+    if (!parseRes.ok) {
+      this.logger.error(
+        'exchange.syncAccountWorkspaces',
+        `Workspace parser failed for "${username}"`,
+        parseRes.error.message,
+      );
+      return fail(parseRes.error.code, parseRes.error.message, parseRes.error.cause);
+    }
+
+    const validatedSnapshot = validateWorkspaceListSnapshot(parseRes.data);
+    if (!validatedSnapshot.valid || !validatedSnapshot.value) {
+      this.logger.error(
+        'exchange.syncAccountWorkspaces',
+        `Invalid workspace list snapshot for "${username}"`,
+        validatedSnapshot.message,
+      );
+      return fail(
+        'WORKSPACE_PARSER_ERROR',
+        validatedSnapshot.message ?? 'Invalid workspace list output',
+      );
+    }
+
+    const snapshot = validatedSnapshot.value;
+
+    // Cache unfiltered page-1 snapshots so Workspaces preview loads immediately on reopen.
+    if (page === 1 && status === '' && !slug && !branch) {
+      const saveRes = await this.storage.save({
+        table: TABLE_WORKSPACE_CACHE,
+        key: username,
+        value: snapshot,
+      });
+      if (!saveRes.ok) {
+        this.logger.warn(
+          'exchange.syncAccountWorkspaces',
+          `Failed to cache workspace preview for "${username}": ${saveRes.error.message}`,
+        );
+      }
+    }
+
+    this.logger.info(
+      'exchange.syncAccountWorkspaces',
+      `Synced ${snapshot.items.length} workspace(s) (total=${snapshot.total}, page=${snapshot.page}) for "${username}"`,
+    );
+    return ok(snapshot);
+  }
+
+  async getWorkspaceBuildLog(
+    input: WorkspaceBuildLogQueryInput,
+  ): Promise<ServiceResult<WorkspaceBuildLogDetail>> {
+    const validated = validateWorkspaceBuildLogQuery(input);
+    if (!validated.valid || !validated.value) {
+      return fail('VALIDATION_ERROR', validated.message ?? 'Invalid build log query');
+    }
+
+    const { username, slug, sn, includeConfig } = validated.value;
+    const credRes = await this.resolveAccountCredentials(
+      username,
+      'exchange.getWorkspaceBuildLog',
+    );
+    if (!credRes.ok) {
+      return fail(credRes.error.code, credRes.error.message, credRes.error.cause);
+    }
+
+    this.logger.verbose(
+      'exchange.getWorkspaceBuildLog',
+      `Fetching build log for "${slug}" (${sn})`,
+    );
+
+    const res = await this.workspaceParser.parseWorkspaceBuildLog({
+      username,
+      cookie: credRes.data.cookie,
+      slug,
+      sn,
+      includeConfig,
+    });
+    if (!res.ok) {
+      this.logger.error(
+        'exchange.getWorkspaceBuildLog',
+        `Build log fetch failed for "${sn}"`,
+        res.error.message,
+      );
+      return fail(res.error.code, res.error.message, res.error.cause);
+    }
+
+    this.logger.info(
+      'exchange.getWorkspaceBuildLog',
+      `Fetched build log "${res.data.sn}" (${res.data.buildStatus})`,
+    );
+    return ok(res.data);
+  }
+
+  async getWorkspaceStageLog(
+    input: WorkspaceStageLogQueryInput,
+  ): Promise<ServiceResult<WorkspaceStageLog>> {
+    const validated = validateWorkspaceStageLogQuery(input);
+    if (!validated.valid || !validated.value) {
+      return fail('VALIDATION_ERROR', validated.message ?? 'Invalid stage log query');
+    }
+
+    const { username, slug, sn, pipelineId, stageId, status } = validated.value;
+    const credRes = await this.resolveAccountCredentials(
+      username,
+      'exchange.getWorkspaceStageLog',
+    );
+    if (!credRes.ok) {
+      return fail(credRes.error.code, credRes.error.message, credRes.error.cause);
+    }
+
+    this.logger.verbose(
+      'exchange.getWorkspaceStageLog',
+      `Fetching stage "${stageId}" log for "${sn}"`,
+    );
+
+    const res = await this.workspaceParser.parseWorkspaceStageLog({
+      username,
+      cookie: credRes.data.cookie,
+      slug,
+      sn,
+      pipelineId,
+      stageId,
+      status,
+    });
+    if (!res.ok) {
+      this.logger.error(
+        'exchange.getWorkspaceStageLog',
+        `Stage log fetch failed for "${sn}/${stageId}"`,
+        res.error.message,
+      );
+      return fail(res.error.code, res.error.message, res.error.cause);
+    }
+
+    this.logger.info(
+      'exchange.getWorkspaceStageLog',
+      `Fetched stage "${res.data.id}" (${res.data.lines.length} line(s)) for "${sn}"`,
+    );
+    return ok(res.data);
+  }
+
   async clearCacheAndLogs(): Promise<
     ServiceResult<{ clearedCacheCount: number; clearedLogCount: number }>
   > {
-    this.logger.info('exchange.clearCacheAndLogs', 'Clearing usage cache and log records');
+    this.logger.info('exchange.clearCacheAndLogs', 'Clearing usage/workspace caches and log records');
 
-    const cacheClearRes = await this.storage.clearTable({ table: TABLE_USAGE_CACHE });
-    if (!cacheClearRes.ok) {
-      return fail('STORAGE_ERROR', cacheClearRes.error.message, cacheClearRes.error.cause);
+    const [usageCacheClearRes, workspaceCacheClearRes] = await Promise.all([
+      this.storage.clearTable({ table: TABLE_USAGE_CACHE }),
+      this.storage.clearTable({ table: TABLE_WORKSPACE_CACHE }),
+    ]);
+    if (!usageCacheClearRes.ok) {
+      return fail('STORAGE_ERROR', usageCacheClearRes.error.message, usageCacheClearRes.error.cause);
     }
+    if (!workspaceCacheClearRes.ok) {
+      return fail(
+        'STORAGE_ERROR',
+        workspaceCacheClearRes.error.message,
+        workspaceCacheClearRes.error.cause,
+      );
+    }
+
+    const totalClearedCache =
+      usageCacheClearRes.data.clearedCount + workspaceCacheClearRes.data.clearedCount;
 
     const accountsRes = await this.storage.readTable<AccountProfile>({
       table: TABLE_ACCOUNTS,
@@ -638,12 +854,47 @@ export class ExchangeCoordinator {
 
     this.logger.info(
       'exchange.clearCacheAndLogs',
-      `Cleared ${cacheClearRes.data.clearedCount} cached snapshot(s) and ${logClearRes.data.clearedCount} log(s)`,
+      `Cleared ${totalClearedCache} cached snapshot(s) and ${logClearRes.data.clearedCount} log(s)`,
     );
 
     return ok({
-      clearedCacheCount: cacheClearRes.data.clearedCount,
+      clearedCacheCount: totalClearedCache,
       clearedLogCount: logClearRes.data.clearedCount,
+    });
+  }
+
+  private async resolveAccountCredentials(
+    username: string,
+    actionName: string,
+  ): Promise<ServiceResult<{ profile: AccountProfile; cookie: string }>> {
+    const profileRes = await this.storage.read<AccountProfile>({
+      table: TABLE_ACCOUNTS,
+      key: username,
+    });
+    if (!profileRes.ok) {
+      return fail('STORAGE_ERROR', profileRes.error.message, profileRes.error.cause);
+    }
+    if (!profileRes.data.exists || !profileRes.data.value) {
+      return fail('NOT_FOUND', `账户 "${username}" 不存在`);
+    }
+
+    const secretRes = await this.storage.read<AccountSecret>({
+      table: TABLE_SECRETS,
+      key: username,
+    });
+    if (!secretRes.ok) {
+      return fail('STORAGE_ERROR', secretRes.error.message, secretRes.error.cause);
+    }
+
+    const cookie = secretRes.data.value?.cookie ?? '';
+    if (!cookie.trim()) {
+      this.logger.warn(actionName, `Missing cookie for "${username}"`);
+      return fail('VALIDATION_ERROR', `账户 "${username}" 的 Cookie 缺失，请重新编辑`);
+    }
+
+    return ok({
+      profile: profileRes.data.value,
+      cookie,
     });
   }
 

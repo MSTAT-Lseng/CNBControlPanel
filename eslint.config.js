@@ -14,7 +14,13 @@ module.exports = defineConfig([
         {
           patterns: [
             {
-              group: ['@/services/storage*', '@/services/parser*', '@/services/exchange*', '../services/*'],
+              group: [
+                '@/services/storage*',
+                '@/services/parser*',
+                '@/services/workspace-parser*',
+                '@/services/exchange*',
+                '../services/*',
+              ],
               message: 'Router shell files may only import from @/services/ui or @/contracts.',
             },
           ],
@@ -30,8 +36,16 @@ module.exports = defineConfig([
         {
           patterns: [
             {
-              group: ['@/services/storage*', '@/services/parser*', '../storage*', '../parser*'],
-              message: 'UI service must never directly access Storage or Parser; go through Exchange.',
+              group: [
+                '@/services/storage*',
+                '@/services/parser*',
+                '@/services/workspace-parser*',
+                '../storage*',
+                '../parser*',
+                '../workspace-parser*',
+              ],
+              message:
+                'UI service must never directly access Storage or Parsers; go through Exchange.',
             },
           ],
         },
@@ -46,7 +60,17 @@ module.exports = defineConfig([
         {
           patterns: [
             {
-              group: ['@/services/ui*', '@/services/parser*', '@/services/exchange*', '@/app*', '../ui*', '../parser*', '../exchange*'],
+              group: [
+                '@/services/ui*',
+                '@/services/parser*',
+                '@/services/workspace-parser*',
+                '@/services/exchange*',
+                '@/app*',
+                '../ui*',
+                '../parser*',
+                '../workspace-parser*',
+                '../exchange*',
+              ],
               message: 'Storage service is strictly isolated and may only import @/contracts.',
             },
           ],
@@ -62,8 +86,45 @@ module.exports = defineConfig([
         {
           patterns: [
             {
-              group: ['@/services/ui*', '@/services/storage*', '@/services/exchange*', '@/app*', '../ui*', '../storage*', '../exchange*'],
+              group: [
+                '@/services/ui*',
+                '@/services/storage*',
+                '@/services/workspace-parser*',
+                '@/services/exchange*',
+                '@/app*',
+                '../ui*',
+                '../storage*',
+                '../workspace-parser*',
+                '../exchange*',
+              ],
               message: 'Parser service is strictly isolated and may only import @/contracts.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['src/services/workspace-parser/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '@/services/ui*',
+                '@/services/storage*',
+                '@/services/parser*',
+                '@/services/exchange*',
+                '@/app*',
+                '../ui*',
+                '../storage*',
+                '../parser*',
+                '../exchange*',
+              ],
+              message:
+                'Workspace Parser service is strictly isolated and may only import @/contracts.',
             },
           ],
         },

@@ -26,6 +26,11 @@ export function OverviewScreen() {
     router.navigate('/(tabs)/accounts');
   };
 
+  const navigateToWorkspaces = () => {
+    exchangeService.reportUiLog('I', 'ui.overview.navigateWorkspaces', 'Opened Cloud Native Dev workspaces from Overview');
+    router.push('/workspaces');
+  };
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: palette.bgCanvas }]}
@@ -82,7 +87,12 @@ export function OverviewScreen() {
 
             <View style={styles.cardsColumn}>
               {overview.metrics.map((metric) => (
-                <MetricSummaryCard key={metric.metric} summary={metric} />
+                <MetricSummaryCard
+                  key={metric.metric}
+                  summary={metric}
+                  onPress={metric.metric === 'dev_cpu' ? navigateToWorkspaces : undefined}
+                  hintLabel={metric.metric === 'dev_cpu' ? '点击查看容器历史' : undefined}
+                />
               ))}
             </View>
           </>

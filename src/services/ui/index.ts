@@ -10,4 +10,7 @@ export { AccountsScreen } from './screens/AccountsScreen';
 export { UsageScreen } from './screens/UsageScreen';
 export { SettingsScreen } from './screens/SettingsScreen';
 export { AccountEditorScreen } from './screens/AccountEditorScreen';
+export { WorkspacesScreen } from './screens/WorkspacesScreen';
+export { WorkspaceHistoryScreen } from './screens/WorkspaceHistoryScreen';
+export { WorkspaceLogsScreen } from './screens/WorkspaceLogsScreen';
 export { LogsScreen } from './screens/LogsScreen';

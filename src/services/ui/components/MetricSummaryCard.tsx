@@ -3,7 +3,7 @@
  */
 
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SymbolView } from 'expo-symbols';
 import type { MetricAggregateSummary } from '@/contracts';
 import { formatQuotaNumber, getMetricSymbol, useIos18Palette } from '../theme/tokens';
@@ -11,13 +11,15 @@ import { QuotaProgressBar } from './QuotaProgressBar';
 
 interface MetricSummaryCardProps {
   summary: MetricAggregateSummary;
+  onPress?: () => void;
+  hintLabel?: string;
 }
 
-export function MetricSummaryCard({ summary }: MetricSummaryCardProps) {
+export function MetricSummaryCard({ summary, onPress, hintLabel }: MetricSummaryCardProps) {
   const palette = useIos18Palette();
 
-  return (
-    <View style={[styles.card, { backgroundColor: palette.bgCard }]}>
+  const cardBody = (
+    <>
       <View style={styles.headerRow}>
         <View style={styles.titleLeft}>
           <View
@@ -32,12 +34,22 @@ export function MetricSummaryCard({ summary }: MetricSummaryCardProps) {
               tintColor={palette.brandOrange}
             />
           </View>
-          <View>
-            <Text style={[styles.title, { color: palette.textPrimary }]}>
-              {summary.label}
-            </Text>
+          <View style={styles.titleTextWrap}>
+            <View style={styles.titleWithChevron}>
+              <Text style={[styles.title, { color: palette.textPrimary }]}>
+                {summary.label}
+              </Text>
+              {onPress ? (
+                <SymbolView
+                  name="chevron.right"
+                  size={12}
+                  weight="semibold"
+                  tintColor={palette.textTertiary}
+                />
+              ) : null}
+            </View>
             <Text style={[styles.subtitle, { color: palette.textSecondary }]}>
-              共 {summary.packageCount} 个额度包
+              {hintLabel ? `共 ${summary.packageCount} 个额度包 · ${hintLabel}` : `共 ${summary.packageCount} 个额度包`}
             </Text>
           </View>
         </View>
@@ -82,8 +94,25 @@ export function MetricSummaryCard({ summary }: MetricSummaryCardProps) {
           </Text>
         </View>
       </View>
-    </View>
+    </>
   );
+
+  if (onPress) {
+    return (
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        style={({ pressed }) => [
+          styles.card,
+          { backgroundColor: palette.bgCard, opacity: pressed ? 0.85 : 1 },
+        ]}
+      >
+        {cardBody}
+      </Pressable>
+    );
+  }
+
+  return <View style={[styles.card, { backgroundColor: palette.bgCard }]}>{cardBody}</View>;
 }
 
 const styles = StyleSheet.create({
@@ -103,6 +132,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     flex: 1,
+  },
+  titleTextWrap: {
+    flex: 1,
+  },
+  titleWithChevron: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   iconPill: {
     width: 34,

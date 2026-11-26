@@ -1,6 +1,7 @@
 /**
  * Public facade for the Update Exchange Service.
- * Instantiates isolated Storage, Parser, and Log subsystems and exposes ExchangePort to UI.
+ * Instantiates isolated Storage, Parser, Workspace Parser, and Log subsystems
+ * and exposes ExchangePort to UI.
  */
 
 import type {
@@ -20,9 +21,16 @@ import type {
   UpdateAccountInput,
   UsageSnapshot,
   UserUsageEntry,
+  WorkspaceBuildLogDetail,
+  WorkspaceBuildLogQueryInput,
+  WorkspaceListSnapshot,
+  WorkspaceStageLog,
+  WorkspaceStageLogQueryInput,
+  WorkspaceSyncInput,
 } from '@/contracts';
 import { createParserService } from '@/services/parser';
 import { createStorageService } from '@/services/storage';
+import { createWorkspaceParserService } from '@/services/workspace-parser';
 import { LogSubsystem } from './logger';
 import { RefreshScheduler } from './scheduler';
 import { ExchangeCoordinator } from './transactions';
@@ -31,7 +39,15 @@ import { DEFAULT_APP_SETTINGS } from './validator';
 const logSubsystem = new LogSubsystem();
 const storageService = createStorageService(logSubsystem.createReporter('Storage'));
 const parserService = createParserService(logSubsystem.createReporter('Parser'));
-const coordinator = new ExchangeCoordinator(storageService, parserService, logSubsystem);
+const workspaceParserService = createWorkspaceParserService(
+  logSubsystem.createReporter('WorkspaceParser'),
+);
+const coordinator = new ExchangeCoordinator(
+  storageService,
+  parserService,
+  workspaceParserService,
+  logSubsystem,
+);
 const uiLogger = logSubsystem.createReporter('UI');
 const schedulerLogger = logSubsystem.createReporter('Exchange');
 
@@ -160,5 +176,25 @@ export const exchangeService: ExchangePort = {
 
   subscribeLogs(listener: () => void): () => void {
     return logSubsystem.subscribe(listener);
+  },
+
+  getCachedWorkspaces(username: string): Promise<ServiceResult<WorkspaceListSnapshot | null>> {
+    return coordinator.getCachedWorkspaces(username);
+  },
+
+  syncAccountWorkspaces(input: WorkspaceSyncInput): Promise<ServiceResult<WorkspaceListSnapshot>> {
+    return coordinator.syncAccountWorkspaces(input);
+  },
+
+  getWorkspaceBuildLog(
+    input: WorkspaceBuildLogQueryInput,
+  ): Promise<ServiceResult<WorkspaceBuildLogDetail>> {
+    return coordinator.getWorkspaceBuildLog(input);
+  },
+
+  getWorkspaceStageLog(
+    input: WorkspaceStageLogQueryInput,
+  ): Promise<ServiceResult<WorkspaceStageLog>> {
+    return coordinator.getWorkspaceStageLog(input);
   },
 };

@@ -109,7 +109,7 @@ export interface AppSettings {
 
 export type LogLevel = 'V' | 'I' | 'W' | 'E';
 
-export type ServiceSource = 'UI' | 'Storage' | 'Parser' | 'Exchange';
+export type ServiceSource = 'UI' | 'Storage' | 'Parser' | 'WorkspaceParser' | 'Exchange';
 
 export interface LogEntry {
   id: string;
@@ -143,4 +143,114 @@ export interface BatchSyncSummary {
   failed: number;
   errors: { username: string; message: string }[];
   completedAt: number;
+}
+
+export type WorkspaceLifecycleStatus = 'running' | 'closed';
+
+export type BuildResultStatus = 'pending' | 'success' | 'failed' | (string & {});
+
+export interface WorkspaceSummary {
+  sn: string;
+  pipelineId: string;
+  slug: string;
+  branch: string;
+  userName: string;
+  status: WorkspaceLifecycleStatus;
+  createTime: string;
+  durationMs: number;
+  fileCount: number;
+  repoUrl: string;
+  ssh: boolean;
+}
+
+export interface WorkspaceListSnapshot {
+  requestedUsername: string;
+  ownerUsername: string;
+  ownerMismatch: boolean;
+  total: number;
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
+  fetchedAt: number;
+  items: WorkspaceSummary[];
+}
+
+export interface WorkspaceStageSummary {
+  id: string;
+  name: string;
+  status: BuildResultStatus;
+  durationMs: number;
+}
+
+export interface WorkspaceBuildConfigSummary {
+  image?: string;
+  stages: string[];
+  envKeys: string[];
+}
+
+export interface WorkspaceAiUsage {
+  totalTokens: number;
+  totalMilliCredit: number;
+}
+
+export interface WorkspaceBuildLogDetail {
+  sn: string;
+  slug: string;
+  title: string;
+  event: string;
+  sha: string;
+  buildStatus: BuildResultStatus;
+  startTimestamp: number;
+  endTimestamp: number;
+  durationMs: number;
+  canRebuild: boolean;
+  logRetentionDays: number;
+  buildLogUrl: string;
+  pipelineId: string;
+  image?: string;
+  cpus?: number;
+  isGpu?: boolean;
+  metricCoreHours?: number;
+  ip?: string;
+  port?: number;
+  aiUsage?: WorkspaceAiUsage;
+  stages: WorkspaceStageSummary[];
+  configSummary?: WorkspaceBuildConfigSummary;
+  fetchedAt: number;
+}
+
+export interface WorkspaceStageLog {
+  id: string;
+  name: string;
+  status: BuildResultStatus;
+  durationMs: number;
+  startTime: number;
+  endTime: number;
+  error: string;
+  lines: string[];
+}
+
+export interface WorkspaceSyncInput {
+  username: string;
+  page?: number;
+  pageSize?: number;
+  status?: WorkspaceLifecycleStatus | '';
+  slug?: string;
+  branch?: string;
+}
+
+export interface WorkspaceBuildLogQueryInput {
+  username: string;
+  slug: string;
+  sn: string;
+  includeConfig?: boolean;
+}
+
+export interface WorkspaceStageLogQueryInput {
+  username: string;
+  slug: string;
+  sn: string;
+  pipelineId: string;
+  stageId: string;
+  status?: string;
 }

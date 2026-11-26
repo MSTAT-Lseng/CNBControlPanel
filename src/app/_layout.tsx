@@ -49,6 +49,27 @@ export default function RootLayout() {
           }}
         />
         <Stack.Screen
+          name="workspaces"
+          options={{
+            ...ios18NativeHeaderOptions,
+            title: '云原生开发',
+          }}
+        />
+        <Stack.Screen
+          name="workspace-history"
+          options={{
+            ...ios18NativeHeaderOptions,
+            title: '容器历史',
+          }}
+        />
+        <Stack.Screen
+          name="workspace-logs"
+          options={{
+            ...ios18NativeHeaderOptions,
+            title: '构建日志',
+          }}
+        />
+        <Stack.Screen
           name="logs"
           options={{
             ...ios18NativeHeaderOptions,

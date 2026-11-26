@@ -17,6 +17,13 @@ import type {
   UpdateAccountInput,
   UsageSnapshot,
   UserUsageEntry,
+  WorkspaceBuildLogDetail,
+  WorkspaceBuildLogQueryInput,
+  WorkspaceLifecycleStatus,
+  WorkspaceListSnapshot,
+  WorkspaceStageLog,
+  WorkspaceStageLogQueryInput,
+  WorkspaceSyncInput,
 } from './domain';
 import type {
   ServiceResult,
@@ -51,6 +58,42 @@ export interface ParserInput {
 
 export interface ParserPort {
   parseUsage(input: ParserInput): Promise<ServiceResult<UsageSnapshot>>;
+}
+
+export interface WorkspaceListInput {
+  username: string;
+  cookie: string;
+  page?: number;
+  pageSize?: number;
+  status?: WorkspaceLifecycleStatus | '';
+  slug?: string;
+  branch?: string;
+}
+
+export interface WorkspaceBuildLogInput {
+  username: string;
+  cookie: string;
+  slug: string;
+  sn: string;
+  includeConfig?: boolean;
+}
+
+export interface WorkspaceStageLogInput {
+  username: string;
+  cookie: string;
+  slug: string;
+  sn: string;
+  pipelineId: string;
+  stageId: string;
+  status?: string;
+}
+
+export interface WorkspaceParserPort {
+  parseWorkspaceList(input: WorkspaceListInput): Promise<ServiceResult<WorkspaceListSnapshot>>;
+  parseWorkspaceBuildLog(
+    input: WorkspaceBuildLogInput,
+  ): Promise<ServiceResult<WorkspaceBuildLogDetail>>;
+  parseWorkspaceStageLog(input: WorkspaceStageLogInput): Promise<ServiceResult<WorkspaceStageLog>>;
 }
 
 export interface ExchangeUiState {
@@ -92,4 +135,13 @@ export interface ExchangePort {
   deleteLogs(ids: string[]): Promise<ServiceResult<{ deletedCount: number }>>;
   clearLogs(): Promise<ServiceResult<{ clearedCount: number }>>;
   subscribeLogs(listener: () => void): () => void;
+
+  getCachedWorkspaces(username: string): Promise<ServiceResult<WorkspaceListSnapshot | null>>;
+  syncAccountWorkspaces(input: WorkspaceSyncInput): Promise<ServiceResult<WorkspaceListSnapshot>>;
+  getWorkspaceBuildLog(
+    input: WorkspaceBuildLogQueryInput,
+  ): Promise<ServiceResult<WorkspaceBuildLogDetail>>;
+  getWorkspaceStageLog(
+    input: WorkspaceStageLogQueryInput,
+  ): Promise<ServiceResult<WorkspaceStageLog>>;
 }

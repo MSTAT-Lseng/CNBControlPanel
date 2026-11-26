@@ -9,6 +9,11 @@ import type {
   QuotaPackage,
   UpdateAccountInput,
   UsageSnapshot,
+  WorkspaceBuildLogQueryInput,
+  WorkspaceLifecycleStatus,
+  WorkspaceListSnapshot,
+  WorkspaceStageLogQueryInput,
+  WorkspaceSyncInput,
 } from '@/contracts';
 
 export const STALE_THRESHOLD_MS = 60 * 60 * 1000;
@@ -168,4 +173,123 @@ export function validateUsageSnapshot(snapshot: UsageSnapshot): ValidationOutcom
     return { valid: false, message: 'Parsed usage snapshot contains invalid quota packages' };
   }
   return { valid: true, value: snapshot };
+}
+
+/**
+ * Validates and normalizes workspace list sync inputs.
+ */
+export function validateWorkspaceSyncInput(input: WorkspaceSyncInput): ValidationOutcome<{
+  username: string;
+  page: number;
+  pageSize: number;
+  status: WorkspaceLifecycleStatus | '';
+  slug: string;
+  branch: string;
+}> {
+  const username = input.username.trim();
+  if (!username) {
+    return { valid: false, message: '用户名不能为空' };
+  }
+
+  const page =
+    typeof input.page === 'number' && Number.isFinite(input.page) && input.page >= 1
+      ? Math.floor(input.page)
+      : 1;
+  const rawPageSize =
+    typeof input.pageSize === 'number' && Number.isFinite(input.pageSize)
+      ? Math.floor(input.pageSize)
+      : 20;
+  const pageSize = Math.max(1, Math.min(100, rawPageSize));
+  const status = input.status ?? '';
+  if (status !== '' && status !== 'running' && status !== 'closed') {
+    return { valid: false, message: '容器状态筛选参数无效' };
+  }
+
+  return {
+    valid: true,
+    value: {
+      username,
+      page,
+      pageSize,
+      status,
+      slug: (input.slug ?? '').trim(),
+      branch: (input.branch ?? '').trim(),
+    },
+  };
+}
+
+/**
+ * Validates structural invariants of a WorkspaceListSnapshot returned by Workspace Parser or cache.
+ */
+export function validateWorkspaceListSnapshot(
+  snapshot: WorkspaceListSnapshot,
+): ValidationOutcome<WorkspaceListSnapshot> {
+  if (!snapshot || !snapshot.requestedUsername.trim() || !Number.isFinite(snapshot.fetchedAt)) {
+    return { valid: false, message: 'Parsed workspace list snapshot is missing metadata' };
+  }
+  if (!Number.isFinite(snapshot.total) || snapshot.total < 0) {
+    return { valid: false, message: 'Parsed workspace list snapshot contains invalid total count' };
+  }
+  if (
+    !Number.isFinite(snapshot.page) ||
+    snapshot.page < 1 ||
+    !Number.isFinite(snapshot.pageSize) ||
+    snapshot.pageSize < 1
+  ) {
+    return { valid: false, message: 'Parsed workspace list snapshot contains invalid pagination' };
+  }
+  if (!Array.isArray(snapshot.items)) {
+    return { valid: false, message: 'Parsed workspace list snapshot items must be an array' };
+  }
+  return { valid: true, value: snapshot };
+}
+
+/**
+ * Validates query parameters for fetching single-container build logs.
+ */
+export function validateWorkspaceBuildLogQuery(
+  input: WorkspaceBuildLogQueryInput,
+): ValidationOutcome<WorkspaceBuildLogQueryInput> {
+  const username = input.username.trim();
+  const slug = input.slug.trim();
+  const sn = input.sn.trim();
+  if (!username || !slug || !sn) {
+    return { valid: false, message: '缺少容器标识参数（username / slug / sn）' };
+  }
+  return {
+    valid: true,
+    value: {
+      username,
+      slug,
+      sn,
+      includeConfig: Boolean(input.includeConfig),
+    },
+  };
+}
+
+/**
+ * Validates query parameters for fetching stage-level terminal output.
+ */
+export function validateWorkspaceStageLogQuery(
+  input: WorkspaceStageLogQueryInput,
+): ValidationOutcome<WorkspaceStageLogQueryInput> {
+  const username = input.username.trim();
+  const slug = input.slug.trim();
+  const sn = input.sn.trim();
+  const pipelineId = input.pipelineId.trim();
+  const stageId = input.stageId.trim();
+  if (!username || !slug || !sn || !pipelineId || !stageId) {
+    return { valid: false, message: '缺少阶段日志查询参数' };
+  }
+  return {
+    valid: true,
+    value: {
+      username,
+      slug,
+      sn,
+      pipelineId,
+      stageId,
+      status: input.status?.trim() || undefined,
+    },
+  };
 }

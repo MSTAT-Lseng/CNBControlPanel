@@ -8,6 +8,7 @@ export type ErrorCode =
   | 'ALREADY_EXISTS'
   | 'STORAGE_ERROR'
   | 'PARSER_ERROR'
+  | 'WORKSPACE_PARSER_ERROR'
   | 'EXCHANGE_ERROR'
   | 'LOGGER_ERROR'
   | 'UNKNOWN_ERROR';

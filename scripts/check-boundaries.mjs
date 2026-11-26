@@ -1,10 +1,10 @@
 /**
  * Static architecture & policy verifier for CNBControlPanel.
  * Checks:
- *  1. Strict 4-service import isolation matrix across all src/ files.
+ *  1. Strict 5-service import isolation matrix across all src/ files.
  *  2. Zero runtime imports in src/contracts/.
  *  3. English-only comments across all .ts/.tsx files in src/.
- *  4. No RefreshControl in the 4 main tab screens & no Liquid Glass libraries outside NativeTabs.
+ *  4. No RefreshControl in the main tab screens & no Liquid Glass libraries outside NativeTabs.
  */
 
 import fs from 'node:fs';
@@ -19,7 +19,8 @@ const ALLOWED_LAYERS = {
   ui: new Set(['contracts', 'ui', 'exchange']),
   storage: new Set(['contracts', 'storage']),
   parser: new Set(['contracts', 'parser']),
-  exchange: new Set(['contracts', 'storage', 'parser', 'exchange']),
+  'workspace-parser': new Set(['contracts', 'workspace-parser']),
+  exchange: new Set(['contracts', 'storage', 'parser', 'workspace-parser', 'exchange']),
 };
 
 function walkFiles(dir) {
@@ -42,6 +43,7 @@ function classifyFileLayer(filePath) {
   if (rel.startsWith('services/ui/')) return 'ui';
   if (rel.startsWith('services/storage/')) return 'storage';
   if (rel.startsWith('services/parser/')) return 'parser';
+  if (rel.startsWith('services/workspace-parser/')) return 'workspace-parser';
   if (rel.startsWith('services/exchange/')) return 'exchange';
   return 'unknown';
 }
@@ -62,6 +64,9 @@ function resolveImportLayer(fromFile, specifier) {
   if (targetRel === 'services/ui' || targetRel.startsWith('services/ui/')) return 'ui';
   if (targetRel === 'services/storage' || targetRel.startsWith('services/storage/')) return 'storage';
   if (targetRel === 'services/parser' || targetRel.startsWith('services/parser/')) return 'parser';
+  if (targetRel === 'services/workspace-parser' || targetRel.startsWith('services/workspace-parser/')) {
+    return 'workspace-parser';
+  }
   if (targetRel === 'services/exchange' || targetRel.startsWith('services/exchange/')) return 'exchange';
   return 'unknown';
 }
