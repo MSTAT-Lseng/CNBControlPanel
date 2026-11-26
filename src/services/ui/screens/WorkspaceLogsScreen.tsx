@@ -38,9 +38,10 @@ import {
   getBuildStatusMeta,
 } from '../theme/workspaceFormat';
 
-const STAGE_COLLAPSE_THRESHOLD = 100;
-const STAGE_HEAD_LINES = 35;
-const STAGE_TAIL_LINES = 55;
+const STAGE_COLLAPSE_THRESHOLD = 40;
+const STAGE_HEAD_LINES = 15;
+const STAGE_TAIL_LINES = 20;
+const STAGE_TEXT_CHUNK_SIZE = 150;
 
 interface StageLogState {
   loading: boolean;
@@ -50,22 +51,27 @@ interface StageLogState {
 }
 
 function buildDisplayedStageLines(lines: string[], showFull: boolean): {
-  text: string;
+  chunks: string[];
   omittedCount: number;
 } {
+  let displayLines: string[];
+  let omittedCount = 0;
+
   if (showFull || lines.length <= STAGE_COLLAPSE_THRESHOLD) {
-    return {
-      text: lines.join('\n'),
-      omittedCount: 0,
-    };
+    displayLines = lines;
+  } else {
+    const head = lines.slice(0, STAGE_HEAD_LINES);
+    const tail = lines.slice(-STAGE_TAIL_LINES);
+    omittedCount = lines.length - head.length - tail.length;
+    displayLines = [...head, `... 已折叠中间 ${omittedCount} 行 ...`, ...tail];
   }
-  const head = lines.slice(0, STAGE_HEAD_LINES);
-  const tail = lines.slice(-STAGE_TAIL_LINES);
-  const omittedCount = lines.length - head.length - tail.length;
-  return {
-    text: [...head, `... 已折叠中间 ${omittedCount} 行 ...`, ...tail].join('\n'),
-    omittedCount,
-  };
+
+  const chunks: string[] = [];
+  for (let i = 0; i < displayLines.length; i += STAGE_TEXT_CHUNK_SIZE) {
+    chunks.push(displayLines.slice(i, i + STAGE_TEXT_CHUNK_SIZE).join('\n'));
+  }
+
+  return { chunks, omittedCount };
 }
 
 export function WorkspaceLogsScreen() {
@@ -434,7 +440,13 @@ export function WorkspaceLogsScreen() {
               </View>
             ) : null}
 
-            <View style={[styles.card, { backgroundColor: palette.bgCard }]}>
+            <View
+              style={[
+                styles.card,
+                { backgroundColor: palette.bgCard },
+                detail.stages.length > 0 && styles.stagesCard,
+              ]}
+            >
               <View style={styles.sectionHeaderRow}>
                 <Text style={[styles.sectionTitle, { color: palette.textPrimary }]}>
                   阶段执行与原始日志
@@ -449,192 +461,201 @@ export function WorkspaceLogsScreen() {
                   暂无阶段明细
                 </Text>
               ) : (
-                detail.stages.map((stage, index) => {
-                  const stageBadge = getBuildStatusMeta(stage.status, palette);
-                  const isExpanded = expandedStageIds.has(stage.id);
-                  const stageState = stageLogs[stage.id];
-                  const stageOutput = stageState?.data
-                    ? buildDisplayedStageLines(stageState.data.lines, stageState.showFull)
-                    : null;
+                <View style={[styles.stageList, { borderTopColor: palette.separator }]}>
+                  {detail.stages.map((stage, index) => {
+                    const stageBadge = getBuildStatusMeta(stage.status, palette);
+                    const isExpanded = expandedStageIds.has(stage.id);
+                    const stageState = stageLogs[stage.id];
+                    const stageOutput = stageState?.data
+                      ? buildDisplayedStageLines(stageState.data.lines, stageState.showFull)
+                      : null;
 
-                  return (
-                    <View
-                      key={stage.id}
-                      style={[
-                        styles.stageContainer,
-                        index > 0 && {
-                          borderTopWidth: StyleSheet.hairlineWidth,
-                          borderTopColor: palette.separator,
-                        },
-                      ]}
-                    >
-                      <Pressable
-                        onPress={() => handleToggleStage(stage)}
-                        accessibilityRole="button"
-                        style={({ pressed }) => [
-                          styles.stageHeader,
-                          { opacity: pressed ? 0.65 : 1 },
-                        ]}
+                    return (
+                      <View
+                        key={stage.id}
+                        style={
+                          index > 0
+                            ? {
+                                borderTopWidth: StyleSheet.hairlineWidth,
+                                borderTopColor: palette.separator,
+                              }
+                            : undefined
+                        }
                       >
-                        <View style={styles.stageLeft}>
-                          <Text style={[styles.stageName, { color: palette.textPrimary }]}>
-                            {stage.name}
-                          </Text>
-                          <View
-                            style={[
-                              styles.miniBadge,
-                              { backgroundColor: stageBadge.bgColor },
-                            ]}
-                          >
-                            <Text style={[styles.miniBadgeText, { color: stageBadge.color }]}>
-                              {stageBadge.label}
+                        <Pressable
+                          onPress={() => handleToggleStage(stage)}
+                          accessibilityRole="button"
+                          style={({ pressed }) => [
+                            styles.stageHeader,
+                            { opacity: pressed ? 0.65 : 1 },
+                          ]}
+                        >
+                          <View style={styles.stageLeft}>
+                            <Text style={[styles.stageName, { color: palette.textPrimary }]}>
+                              {stage.name}
                             </Text>
-                          </View>
-                        </View>
-
-                        <View style={styles.stageRight}>
-                          <Text style={[styles.stageDuration, { color: palette.textSecondary }]}>
-                            {formatDurationMs(stage.durationMs)}
-                          </Text>
-                          <SymbolView
-                            name={isExpanded ? 'chevron.down' : 'chevron.right'}
-                            size={12}
-                            weight="semibold"
-                            tintColor={palette.textTertiary}
-                          />
-                        </View>
-                      </Pressable>
-
-                      {isExpanded ? (
-                        <View style={styles.stageBody}>
-                          {stageState?.loading ? (
-                            <View style={styles.stageLoading}>
-                              <ActivityIndicator size="small" color={palette.themeAccent} />
-                              <Text style={[styles.stageNote, { color: palette.textSecondary }]}>
-                                正在加载阶段输出...
-                              </Text>
-                            </View>
-                          ) : stageState?.error ? (
                             <View
                               style={[
-                                styles.stageErrorBox,
-                                {
-                                  backgroundColor: palette.dangerBannerBg,
-                                  borderColor: palette.dangerBannerBorder,
-                                },
+                                styles.miniBadge,
+                                { backgroundColor: stageBadge.bgColor },
                               ]}
                             >
-                              <Text style={[styles.stageErrorText, { color: palette.accentRed }]}>
-                                {stageState.error}
+                              <Text style={[styles.miniBadgeText, { color: stageBadge.color }]}>
+                                {stageBadge.label}
                               </Text>
-                              <Pressable onPress={() => void loadStageLog(stage)}>
-                                <Text
-                                  style={[styles.retryLink, { color: palette.themeAccent }]}
-                                >
-                                  重新加载
-                                </Text>
-                              </Pressable>
                             </View>
-                          ) : stageState?.data ? (
-                            <>
-                              {stageState.data.error ? (
-                                <Text
-                                  style={[styles.stageErrorInline, { color: palette.accentRed }]}
-                                >
-                                  错误：{stageState.data.error}
+                          </View>
+
+                          <View style={styles.stageRight}>
+                            <Text style={[styles.stageDuration, { color: palette.textSecondary }]}>
+                              {formatDurationMs(stage.durationMs)}
+                            </Text>
+                            <SymbolView
+                              name={isExpanded ? 'chevron.down' : 'chevron.right'}
+                              size={12}
+                              weight="semibold"
+                              tintColor={palette.textTertiary}
+                            />
+                          </View>
+                        </Pressable>
+
+                        {isExpanded ? (
+                          <View style={styles.stageBody}>
+                            {stageState?.loading ? (
+                              <View style={styles.stageLoading}>
+                                <ActivityIndicator size="small" color={palette.themeAccent} />
+                                <Text style={[styles.stageNote, { color: palette.textSecondary }]}>
+                                  正在加载阶段输出...
                                 </Text>
-                              ) : null}
-
-                              {stageState.data.lines.length === 0 ? (
-                                <Text
-                                  style={[styles.stageNote, { color: palette.textSecondary }]}
-                                >
-                                  无输出日志
+                              </View>
+                            ) : stageState?.error ? (
+                              <View
+                                style={[
+                                  styles.stageErrorBox,
+                                  {
+                                    backgroundColor: palette.dangerBannerBg,
+                                    borderColor: palette.dangerBannerBorder,
+                                  },
+                                ]}
+                              >
+                                <Text style={[styles.stageErrorText, { color: palette.accentRed }]}>
+                                  {stageState.error}
                                 </Text>
-                              ) : (
-                                <>
-                                  <View style={styles.stageToolbar}>
-                                    <Text
-                                      style={[
-                                        styles.stageLineCount,
-                                        { color: palette.textSecondary },
-                                      ]}
-                                    >
-                                      共 {stageState.data.lines.length} 行
-                                    </Text>
-                                    <View style={styles.stageActionsRow}>
-                                      {stageOutput && stageOutput.omittedCount > 0 ? (
-                                        <Pressable
-                                          onPress={() => handleToggleFullStage(stage.id)}
-                                          hitSlop={6}
-                                        >
-                                          <Text
-                                            style={[
-                                              styles.stageActionText,
-                                              { color: palette.themeAccent },
-                                            ]}
-                                          >
-                                            展开全部
-                                          </Text>
-                                        </Pressable>
-                                      ) : stageState.data.lines.length > STAGE_COLLAPSE_THRESHOLD ? (
-                                        <Pressable
-                                          onPress={() => handleToggleFullStage(stage.id)}
-                                          hitSlop={6}
-                                        >
-                                          <Text
-                                            style={[
-                                              styles.stageActionText,
-                                              { color: palette.themeAccent },
-                                            ]}
-                                          >
-                                            收起摘要
-                                          </Text>
-                                        </Pressable>
-                                      ) : null}
-
-                                      <Pressable
-                                        onPress={() => void handleCopyStageLog(stageState.data!)}
-                                        hitSlop={6}
-                                      >
-                                        <Text
-                                          style={[
-                                            styles.stageActionText,
-                                            { color: palette.themeAccent },
-                                          ]}
-                                        >
-                                          复制本阶段
-                                        </Text>
-                                      </Pressable>
-                                    </View>
-                                  </View>
-
-                                  <ScrollView
-                                    horizontal
-                                    style={[
-                                      styles.terminalBox,
-                                      { backgroundColor: palette.bgSecondaryFill },
-                                    ]}
+                                <Pressable onPress={() => void loadStageLog(stage)}>
+                                  <Text
+                                    style={[styles.retryLink, { color: palette.themeAccent }]}
                                   >
-                                    <Text
-                                      selectable
+                                    重新加载
+                                  </Text>
+                                </Pressable>
+                              </View>
+                            ) : stageState?.data ? (
+                              <>
+                                {stageState.data.error ? (
+                                  <Text
+                                    style={[styles.stageErrorInline, { color: palette.accentRed }]}
+                                  >
+                                    错误：{stageState.data.error}
+                                  </Text>
+                                ) : null}
+
+                                {stageState.data.lines.length === 0 ? (
+                                  <Text
+                                    style={[styles.stageNote, { color: palette.textSecondary }]}
+                                  >
+                                    无输出日志
+                                  </Text>
+                                ) : (
+                                  <>
+                                    <View style={styles.stageToolbar}>
+                                      <Text
+                                        style={[
+                                          styles.stageLineCount,
+                                          { color: palette.textSecondary },
+                                        ]}
+                                      >
+                                        共 {stageState.data.lines.length} 行
+                                      </Text>
+                                      <View style={styles.stageActionsRow}>
+                                        {stageOutput && stageOutput.omittedCount > 0 ? (
+                                          <Pressable
+                                            onPress={() => handleToggleFullStage(stage.id)}
+                                            hitSlop={6}
+                                          >
+                                            <Text
+                                              style={[
+                                                styles.stageActionText,
+                                                { color: palette.themeAccent },
+                                              ]}
+                                            >
+                                              展开全部
+                                            </Text>
+                                          </Pressable>
+                                        ) : stageState.data.lines.length > STAGE_COLLAPSE_THRESHOLD ? (
+                                          <Pressable
+                                            onPress={() => handleToggleFullStage(stage.id)}
+                                            hitSlop={6}
+                                          >
+                                            <Text
+                                              style={[
+                                                styles.stageActionText,
+                                                { color: palette.themeAccent },
+                                              ]}
+                                            >
+                                              收起摘要
+                                            </Text>
+                                          </Pressable>
+                                        ) : null}
+
+                                        <Pressable
+                                          onPress={() => void handleCopyStageLog(stageState.data!)}
+                                          hitSlop={6}
+                                        >
+                                          <Text
+                                            style={[
+                                              styles.stageActionText,
+                                              { color: palette.themeAccent },
+                                            ]}
+                                          >
+                                            复制本阶段
+                                          </Text>
+                                        </Pressable>
+                                      </View>
+                                    </View>
+
+                                    <ScrollView
+                                      horizontal
                                       style={[
-                                        styles.terminalText,
-                                        { color: palette.textPrimary },
+                                        styles.terminalBox,
+                                        { backgroundColor: palette.bgSecondaryFill },
                                       ]}
+                                      contentContainerStyle={styles.terminalContent}
                                     >
-                                      {stageOutput?.text ?? ''}
-                                    </Text>
-                                  </ScrollView>
-                                </>
-                              )}
-                            </>
-                          ) : null}
-                        </View>
-                      ) : null}
-                    </View>
-                  );
-                })
+                                      <View style={styles.terminalColumn}>
+                                        {(stageOutput?.chunks ?? []).map((chunk, chunkIndex) => (
+                                          <Text
+                                            key={`${stage.id}-chunk-${chunkIndex}`}
+                                            selectable
+                                            style={[
+                                              styles.terminalText,
+                                              { color: palette.textPrimary },
+                                            ]}
+                                          >
+                                            {chunk}
+                                          </Text>
+                                        ))}
+                                      </View>
+                                    </ScrollView>
+                                  </>
+                                )}
+                              </>
+                            ) : null}
+                          </View>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
               )}
             </View>
           </>
@@ -704,6 +725,9 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 12,
   },
+  stagesCard: {
+    paddingBottom: 4,
+  },
   cardTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -772,14 +796,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
     paddingVertical: 8,
   },
-  stageContainer: {
-    paddingVertical: 4,
+  stageList: {
+    borderTopWidth: StyleSheet.hairlineWidth,
   },
   stageHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 10,
+    paddingVertical: 12,
     gap: 10,
   },
   stageLeft: {
@@ -812,7 +836,7 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   stageBody: {
-    paddingBottom: 10,
+    paddingBottom: 12,
     gap: 8,
   },
   stageLoading: {
@@ -864,8 +888,12 @@ const styles = StyleSheet.create({
   },
   terminalBox: {
     borderRadius: 10,
+  },
+  terminalContent: {
     padding: 10,
-    maxHeight: 360,
+  },
+  terminalColumn: {
+    flexDirection: 'column',
   },
   terminalText: {
     fontSize: 11,
