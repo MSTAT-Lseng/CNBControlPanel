@@ -54,7 +54,7 @@ export function WorkspaceRow({
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: palette.separator,
         },
-        { opacity: pressed ? 0.65 : 1 },
+        pressed && { backgroundColor: `${palette.bgSecondaryFill}66` },
       ]}
     >
       <View style={styles.mainCol}>

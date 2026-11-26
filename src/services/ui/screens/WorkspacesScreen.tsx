@@ -369,10 +369,8 @@ export function WorkspacesScreen() {
                 accessibilityRole="button"
                 style={({ pressed }) => [
                   styles.viewMoreRow,
-                  {
-                    borderTopColor: palette.separator,
-                    opacity: pressed ? 0.65 : 1,
-                  },
+                  { borderTopColor: palette.separator },
+                  pressed && { backgroundColor: `${palette.bgSecondaryFill}66` },
                 ]}
               >
                 <Text style={[styles.viewMoreText, { color: palette.themeAccent }]}>

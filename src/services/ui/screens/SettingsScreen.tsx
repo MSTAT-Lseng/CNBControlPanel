@@ -36,7 +36,7 @@ export function SettingsScreen() {
   const { settings } = useExchangeState();
   const [now, setNow] = useState(() => new Date());
 
-  const appVersion = Constants.expoConfig?.version ?? '1.0.0';
+  const appVersion = Constants.expoConfig?.version ?? '1.0.1';
 
   useEffect(() => {
     const timer = setInterval(() => {

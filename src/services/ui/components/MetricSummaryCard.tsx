@@ -102,12 +102,22 @@ export function MetricSummaryCard({ summary, onPress, hintLabel }: MetricSummary
       <Pressable
         onPress={onPress}
         accessibilityRole="button"
-        style={({ pressed }) => [
-          styles.card,
-          { backgroundColor: palette.bgCard, opacity: pressed ? 0.85 : 1 },
-        ]}
+        style={[styles.card, { backgroundColor: palette.bgCard }]}
       >
-        {cardBody}
+        {({ pressed }) => (
+          <>
+            {pressed ? (
+              <View
+                pointerEvents="none"
+                style={[
+                  StyleSheet.absoluteFill,
+                  { backgroundColor: `${palette.bgSecondaryFill}66` },
+                ]}
+              />
+            ) : null}
+            {cardBody}
+          </>
+        )}
       </Pressable>
     );
   }
@@ -120,6 +130,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     padding: 16,
     gap: 14,
+    overflow: 'hidden',
   },
   headerRow: {
     flexDirection: 'row',
