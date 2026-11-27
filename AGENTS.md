@@ -80,6 +80,7 @@ CNBControlPanel/
         │   ├── validator.ts
         │   ├── transactions.ts
         │   ├── scheduler.ts
+        │   ├── logCleanupScheduler.ts
         │   └── logger/
         │       ├── index.ts
         │       └── logDatabase.ts
@@ -166,6 +167,8 @@ Key domain models:
     autoRefreshOnLaunch: boolean; // Auto-refresh in background on app activation
     autoRefreshEnabled: boolean;  // Periodic interval auto-refresh toggle
     autoRefreshIntervalMinutes: number; // Clamped integer 1..1440 (default: 15)
+    autoLogCleanupEnabled: boolean; // Foreground automatic expired-log cleanup toggle (default: false)
+    logRetentionHours: number; // Clamped integer 1..720 (default: 24)
   }
   ```
 - `LogLevel`: `'V' | 'I' | 'W' | 'E'`
@@ -251,7 +254,7 @@ Key domain models:
 
 ### 3.4 Update Exchange Service & Log Subsystem (`src/services/exchange/`)
 
-**Purpose:** Central transaction coordinator, validator, background/interval refresh scheduler, and independent logging subsystem.
+**Purpose:** Central transaction coordinator, validator, background/interval refresh scheduler, foreground log-retention scheduler, and independent logging subsystem.
 
 #### A. Independent Log Subsystem (`src/services/exchange/logger/`)
 - **Physical Isolation:** Uses its own dedicated SQLite database (`cnb_panel_logs.db`) via `expo-sqlite`, completely separate from `storage` (`cnb_panel_storage.db` / Keychain). If `storage` fails or clears cache, logs remain intact unless the user explicitly clears logs.
@@ -270,11 +273,13 @@ Key domain models:
   CREATE INDEX IF NOT EXISTS idx_app_logs_timestamp ON app_logs(timestamp DESC);
   ```
 - **Resilience:** Maintains a small in-memory pending queue if SQLite is still initializing at cold boot, flushing immediately once the DB handle opens, plus automatic retention cap (e.g., pruning oldest entries beyond 5,000 rows).
+- **Mutation Serialization:** `flush`, `updateLog`, `deleteLogs`, `clearLogs`, and `deleteExpiredLogs` share one mutation tail so pending writes, manual edits/deletes, and automatic cleanup cannot interleave and resurrect expired rows.
 - **CRUD Operations:**
   - **Create:** `LogSubsystem.record(...)` / `exchangeService.reportUiLog(...)`
   - **Read:** `queryLogs({ levels?, sources?, search?, limit?, offset? })`
   - **Update:** `updateLog({ id, note?, level?, message? })`
   - **Delete:** `deleteLogs({ ids })` / `clearLogs()`
+  - **Time-Based Pruning:** `deleteExpiredLogs(cutoff, shouldRun)` deletes only rows older than the cutoff and rechecks the guard after database initialization.
 
 #### B. Validation & Transactions (`validator.ts` & `transactions.ts`)
 Every transaction validates inputs before invoking `storage`, `parser`, or `workspace-parser`, logs start/success/failure, and emits state-change events to subscribed UI hooks:
@@ -288,7 +293,7 @@ Every transaction validates inputs before invoking `storage`, `parser`, or `work
 8. `getAllUsageSnapshots()` — returns ordered user list paired with their cached `UsageSnapshot | null`.
 9. `syncAccountWorkspaces({ username, page?, pageSize?, status?, slug?, branch? })` / `getCachedWorkspaces(username)` — resolves account credentials via `storage`, invokes `workspaceParser.parseWorkspaceList`, caches unfiltered page-1 snapshots in `workspace_cache`, and exposes `hasMore` + `ownerMismatch` metadata for `"查看更多"` pagination.
 10. `getWorkspaceBuildLog({ username, slug, sn, includeConfig? })` / `getWorkspaceStageLog({ username, slug, sn, pipelineId, stageId, status? })` — resolves account credentials via `storage` and delegates to `workspaceParser` for on-demand container build detail and stage output retrieval.
-11. `getSettings()` / `updateSettings(patch)` — reads/updates `AppSettings`, reconfiguring the auto-refresh scheduler immediately.
+11. `getSettings()` / `updateSettings(patch)` — reads/updates `AppSettings`, reconfiguring both the auto-refresh scheduler and foreground log-cleanup scheduler immediately.
 12. `clearCacheAndLogs()` — clears `usage_cache` and `workspace_cache` via `storage.clearTable(...)`, resets `lastSyncedAt` to `null` on accounts (preserving accounts and settings), and calls `logger.clearLogs()`, then logs a fresh `I` entry confirming the reset.
 
 #### C. Auto-Refresh Scheduler (`scheduler.ts`)
@@ -296,6 +301,12 @@ Every transaction validates inputs before invoking `storage`, `parser`, or `work
   - When `autoRefreshOnLaunch` is `true`, triggers a non-blocking silent `syncAllAccountsUsage()` on initial app startup and when returning to foreground (debounced e.g. at least 15s between foreground triggers to avoid duplicate bursts).
 - When `autoRefreshEnabled` is `true`, runs a `setInterval` timer every `autoRefreshIntervalMinutes * 60_000` ms while the app is active, triggering `syncAllAccountsUsage()`.
 - Re-arms/cancels cleanly whenever settings change.
+
+#### D. Foreground Log-Cleanup Scheduler (`logCleanupScheduler.ts`)
+- Independent of account refresh settings and account count; uses only `autoLogCleanupEnabled` and `logRetentionHours`.
+- On start, settings change, or `'background' | 'inactive'` -> `'active'` transition, immediately checks for local log entries older than `Date.now() - logRetentionHours * 60 * 60_000`; while active, rechecks every 5 minutes.
+- Cancels timers when the app leaves the foreground or the feature is disabled; rechecks the lifecycle/policy guard after waiting for queued database mutations and before SQLite deletion.
+- Does not guarantee execution while suspended in Expo Go; missing checks are covered on the next launch/activation. The 5,000-row retention cap remains active regardless of this toggle.
 
 ---
 
@@ -320,7 +331,7 @@ Every transaction validates inputs before invoking `storage`, `parser`, or `work
   - Tapping `"查看更多"` pushes `workspace-history` for that account to load paginated older containers.
   - Tapping any container row in either `workspaces` or `workspace-history` pushes `workspace-logs` to inspect the full build summary and stage logs.
 - **App Version Retrieval in Expo Go**:
-  - Reads `Constants.expoConfig?.version ?? '1.0.1'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
+  - Reads `Constants.expoConfig?.version ?? '1.0.2'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
 
 ---
 

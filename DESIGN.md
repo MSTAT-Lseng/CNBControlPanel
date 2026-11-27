@@ -155,14 +155,17 @@ Used at the top of `概览`, `账户`, `用量`, and `设置`:
 ### 5.4 设置 (Settings Tab — `settings`)
 Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top to bottom:
 1. **Section 1 — 应用信息:**
-   - Row 1: `App 版本` — trailing value `v1.0.1` (from `Constants.expoConfig.version`)
+   - Row 1: `App 版本` — trailing value `v1.0.2` (from `Constants.expoConfig.version`)
    - Row 2: `当前系统时间` — trailing live-updating value (`YYYY-MM-DD HH:mm:ss`, tabular numerals)
 2. **Section 2 — 刷新策略:**
    - Row 1: `启用应用时后台自动刷新用量` — trailing iOS `<Switch>`
    - Row 2: `自动刷新` — trailing iOS `<Switch>`
    - Row 3: `自动刷新间隔` — trailing `−` / `N 分钟` / `＋` stepper controls (`±5` min on tap, `±1` min on long press, 1–1440 min range; visually dimmed when `自动刷新` is off)
 3. **Section 3 — 诊断日志:**
-   - Row 1: `运行日志 (Log)` — trailing `查看 >` disclosure indicator; pushes standalone `logs` page
+   - Row 1: `自动清理过期日志` — trailing iOS `<Switch>`; when off, the retention row below stays visible with its controls dimmed but its hairline separator unchanged
+   - Row 2: `日志保留时长` — trailing `−` / `N 小时` / `＋` stepper controls (`±1` hour per tap, 1–720 hour range; disabled and visually dimmed when cleanup is off)
+   - Row 3: `运行日志 (Log)` — trailing `查看 >` disclosure indicator; pushes standalone `logs` page
+   - Footer: `点按“− / ＋”每次调整 1 小时（范围 1–720 小时）。` (stable copy; saving settings never inserts transient text into the layout)
 4. **Section 4 — 数据清理:**
    - Row 1: `清除缓存和 Log 数据` — centered destructive red (`#FF3B30`) button; shows native iOS `Alert.alert` confirmation before clearing usage/workspace caches & all logs (accounts and settings remain intact).
 
