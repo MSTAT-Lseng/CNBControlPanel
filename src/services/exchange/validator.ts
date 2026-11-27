@@ -19,11 +19,15 @@ import type {
 export const STALE_THRESHOLD_MS = 60 * 60 * 1000;
 export const MIN_REFRESH_INTERVAL_MINUTES = 1;
 export const MAX_REFRESH_INTERVAL_MINUTES = 1440;
+export const MIN_LOG_RETENTION_HOURS = 1;
+export const MAX_LOG_RETENTION_HOURS = 720;
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   autoRefreshOnLaunch: true,
   autoRefreshEnabled: false,
   autoRefreshIntervalMinutes: 15,
+  autoLogCleanupEnabled: false,
+  logRetentionHours: 24,
 };
 
 export interface ValidationOutcome<T> {
@@ -122,6 +126,13 @@ export function sanitizeSettings(
     Math.min(MAX_REFRESH_INTERVAL_MINUTES, roundedMinutes),
   );
 
+  const rawHours = patch.logRetentionHours ?? current.logRetentionHours;
+  const roundedHours = Number.isFinite(rawHours) ? Math.round(rawHours) : current.logRetentionHours;
+  const clampedHours = Math.max(
+    MIN_LOG_RETENTION_HOURS,
+    Math.min(MAX_LOG_RETENTION_HOURS, roundedHours),
+  );
+
   return {
     autoRefreshOnLaunch:
       typeof patch.autoRefreshOnLaunch === 'boolean'
@@ -132,6 +143,11 @@ export function sanitizeSettings(
         ? patch.autoRefreshEnabled
         : current.autoRefreshEnabled,
     autoRefreshIntervalMinutes: clampedMinutes,
+    autoLogCleanupEnabled:
+      typeof patch.autoLogCleanupEnabled === 'boolean'
+        ? patch.autoLogCleanupEnabled
+        : current.autoLogCleanupEnabled,
+    logRetentionHours: clampedHours,
   };
 }
 

@@ -201,6 +201,22 @@ export async function deleteLogRowsByIds(ids: string[]): Promise<number> {
 }
 
 /**
+ * Deletes only entries strictly older than the supplied epoch-millisecond cutoff.
+ */
+export async function deleteLogRowsBefore(
+  cutoff: number,
+  shouldRun: () => boolean,
+): Promise<number | null> {
+  const db = await getLogDb();
+  // Opening SQLite can yield long enough for the policy or foreground state to change.
+  if (!shouldRun()) {
+    return null;
+  }
+  const result = await db.runAsync('DELETE FROM app_logs WHERE timestamp < ?', [cutoff]);
+  return result.changes;
+}
+
+/**
  * Deletes every record in the log database and returns the removed count.
  */
 export async function clearAllLogRows(): Promise<number> {

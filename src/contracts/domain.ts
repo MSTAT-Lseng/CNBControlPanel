@@ -105,6 +105,8 @@ export interface AppSettings {
   autoRefreshOnLaunch: boolean;
   autoRefreshEnabled: boolean;
   autoRefreshIntervalMinutes: number;
+  autoLogCleanupEnabled: boolean;
+  logRetentionHours: number;
 }
 
 export type LogLevel = 'V' | 'I' | 'W' | 'E';

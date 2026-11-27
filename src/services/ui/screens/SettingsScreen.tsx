@@ -1,16 +1,17 @@
 /**
  * Settings tab screen modeled directly after iOS 18 System Settings inset grouped lists.
  * Ordered top-to-bottom: App Version & System Time, Background Refresh Switch,
- * Auto-Refresh Switch & Interval (minutes), Open Logs, and Clear Cache & Logs.
+ * Auto-Refresh Switch & Interval (minutes), Log Retention & Viewer, and Clear Cache & Logs.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import Constants from 'expo-constants';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { AppSettings } from '@/contracts/domain';
 import { exchangeService } from '@/services/exchange';
 import { AppStoreTabHeader } from '../components/AppStoreTabHeader';
 import { useExchangeState } from '../hooks/useExchange';
@@ -33,8 +34,15 @@ export function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const palette = useIos18Palette();
-  const { settings } = useExchangeState();
+  const { settings: persistedSettings } = useExchangeState();
+  const [pendingSettings, setPendingSettings] = useState<Partial<AppSettings> | null>(null);
+  const settings = { ...persistedSettings, ...pendingSettings };
+  const savingSettings = pendingSettings !== null;
   const [now, setNow] = useState(() => new Date());
+  const settingsSaveLock = useRef(false);
+  const retentionDisabled = !settings.autoLogCleanupEnabled;
+  const decreaseRetentionDisabled = retentionDisabled || settings.logRetentionHours <= 1;
+  const increaseRetentionDisabled = retentionDisabled || settings.logRetentionHours >= 720;
 
   const appVersion = Constants.expoConfig?.version ?? '1.0.1';
 
@@ -45,25 +53,56 @@ export function SettingsScreen() {
     return () => clearInterval(timer);
   }, []);
 
+  const saveSettings = async (patch: Partial<AppSettings>) => {
+    // Serialize saves without toggling native disabled styles or changing the page layout.
+    if (settingsSaveLock.current) {
+      return;
+    }
+    settingsSaveLock.current = true;
+    // Keep controlled switches responsive while persistence is in flight.
+    setPendingSettings(patch);
+    try {
+      const result = await exchangeService.updateSettings(patch);
+      if (!result.ok) {
+        Alert.alert('保存设置失败', result.error.message);
+      }
+    } catch {
+      Alert.alert('保存设置失败', '暂时无法保存设置，请稍后重试。');
+    } finally {
+      settingsSaveLock.current = false;
+      // Exchange publishes successful saves; failures fall back to the persisted values.
+      setPendingSettings(null);
+    }
+  };
+
   const handleToggleOnLaunch = (nextValue: boolean) => {
+    if (settingsSaveLock.current) {
+      return;
+    }
     exchangeService.reportUiLog(
       'I',
       'ui.settings.toggleOnLaunch',
       `Set autoRefreshOnLaunch=${nextValue}`,
     );
-    void exchangeService.updateSettings({ autoRefreshOnLaunch: nextValue });
+    void saveSettings({ autoRefreshOnLaunch: nextValue });
   };
 
   const handleToggleAutoRefresh = (nextValue: boolean) => {
+    if (settingsSaveLock.current) {
+      return;
+    }
     exchangeService.reportUiLog(
       'I',
       'ui.settings.toggleAutoRefresh',
       `Set autoRefreshEnabled=${nextValue}`,
     );
-    void exchangeService.updateSettings({ autoRefreshEnabled: nextValue });
+    void saveSettings({ autoRefreshEnabled: nextValue });
   };
 
   const handleStepInterval = (delta: number) => {
+    if (settingsSaveLock.current || !settings.autoRefreshEnabled) {
+      return;
+    }
     const nextMinutes = Math.max(1, Math.min(1440, settings.autoRefreshIntervalMinutes + delta));
     if (nextMinutes === settings.autoRefreshIntervalMinutes) {
       return;
@@ -74,7 +113,36 @@ export function SettingsScreen() {
       'ui.settings.changeInterval',
       `Updated autoRefreshIntervalMinutes=${nextMinutes}`,
     );
-    void exchangeService.updateSettings({ autoRefreshIntervalMinutes: nextMinutes });
+    void saveSettings({ autoRefreshIntervalMinutes: nextMinutes });
+  };
+
+  const handleToggleLogCleanup = (nextValue: boolean) => {
+    if (settingsSaveLock.current) {
+      return;
+    }
+    exchangeService.reportUiLog(
+      'I',
+      'ui.settings.toggleLogCleanup',
+      `Set autoLogCleanupEnabled=${nextValue}`,
+    );
+    void saveSettings({ autoLogCleanupEnabled: nextValue });
+  };
+
+  const handleStepLogRetention = (delta: number) => {
+    if (settingsSaveLock.current || !settings.autoLogCleanupEnabled) {
+      return;
+    }
+    const nextHours = Math.max(1, Math.min(720, settings.logRetentionHours + delta));
+    if (nextHours === settings.logRetentionHours) {
+      return;
+    }
+    void Haptics.selectionAsync();
+    exchangeService.reportUiLog(
+      'I',
+      'ui.settings.changeLogRetention',
+      `Set logRetentionHours=${nextHours}`,
+    );
+    void saveSettings({ logRetentionHours: nextHours });
   };
 
   const handleOpenLogs = () => {
@@ -256,10 +324,90 @@ export function SettingsScreen() {
           </Text>
         </View>
 
-        {/* Section 3: Open Logs Standalone Page */}
+        {/* Section 3: Local Log Retention and Standalone Viewer */}
         <View style={styles.sectionBlock}>
           <Text style={[styles.sectionLabel, { color: palette.textSecondary }]}>诊断日志</Text>
           <View style={[styles.groupCard, { backgroundColor: palette.bgCard }]}>
+            <View
+              style={[
+                styles.row,
+                {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: palette.separator,
+                },
+              ]}
+            >
+              <View style={styles.rowLeft}>
+                <SettingIconBadge symbol="trash.fill" bgColor={palette.accentGreen} />
+                <Text style={[styles.rowTitle, { color: palette.textPrimary }]}>
+                  自动清理过期日志
+                </Text>
+              </View>
+              <Switch
+                accessibilityLabel="自动清理过期日志"
+                accessibilityState={{ busy: savingSettings }}
+                value={settings.autoLogCleanupEnabled}
+                onValueChange={handleToggleLogCleanup}
+              />
+            </View>
+
+            <View
+              style={[
+                styles.row,
+                {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: palette.separator,
+                },
+              ]}
+            >
+              <View style={[styles.rowLeft, retentionDisabled && styles.rowDimmed]}>
+                <SettingIconBadge symbol="hourglass" bgColor={palette.accentOrange} />
+                <Text style={[styles.rowTitle, { color: palette.textPrimary }]}>
+                  日志保留时长
+                </Text>
+              </View>
+              <View style={[styles.stepper, retentionDisabled && styles.rowDimmed]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="日志保留时长减少 1 小时"
+                  accessibilityState={{ disabled: decreaseRetentionDisabled, busy: savingSettings }}
+                  onPress={() => handleStepLogRetention(-1)}
+                  disabled={decreaseRetentionDisabled}
+                  style={({ pressed }) => [
+                    styles.stepBtn,
+                    {
+                      backgroundColor: palette.bgSecondaryFill,
+                      opacity: decreaseRetentionDisabled ? 0.45 : pressed ? 0.65 : 1,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.stepBtnText, { color: palette.textPrimary }]}>−</Text>
+                </Pressable>
+                <Text
+                  accessibilityLabel={`日志保留时长 ${settings.logRetentionHours} 小时`}
+                  style={[styles.intervalText, { color: palette.textPrimary }]}
+                >
+                  {settings.logRetentionHours} 小时
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="日志保留时长增加 1 小时"
+                  accessibilityState={{ disabled: increaseRetentionDisabled, busy: savingSettings }}
+                  onPress={() => handleStepLogRetention(1)}
+                  disabled={increaseRetentionDisabled}
+                  style={({ pressed }) => [
+                    styles.stepBtn,
+                    {
+                      backgroundColor: palette.bgSecondaryFill,
+                      opacity: increaseRetentionDisabled ? 0.45 : pressed ? 0.65 : 1,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.stepBtnText, { color: palette.textPrimary }]}>＋</Text>
+                </Pressable>
+              </View>
+            </View>
+
             <Pressable
               onPress={handleOpenLogs}
               style={({ pressed }) => [
@@ -277,6 +425,9 @@ export function SettingsScreen() {
               </View>
             </Pressable>
           </View>
+          <Text style={[styles.sectionFooter, { color: palette.textSecondary }]}>
+            点按“− / ＋”每次调整 1 小时（范围 1–720 小时）。
+          </Text>
         </View>
 
         {/* Section 4: Clear Cache and Log Data */}

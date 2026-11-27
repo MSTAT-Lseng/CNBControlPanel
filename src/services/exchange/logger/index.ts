@@ -16,6 +16,7 @@ import type {
 import {
   clearAllLogRows,
   deleteLogRowsByIds,
+  deleteLogRowsBefore,
   insertLogBatch,
   selectLogEntries,
   updateLogRow,
@@ -27,7 +28,7 @@ export class LogSubsystem {
   private pendingQueue: LogEntry[] = [];
   private fallbackBuffer: LogEntry[] = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
-  private isFlushing = false;
+  private mutationTail: Promise<void> = Promise.resolve();
   private sequence = 0;
   private listeners = new Set<() => void>();
 
@@ -80,17 +81,20 @@ export class LogSubsystem {
   /**
    * Flushes all queued entries immediately to the isolated SQLite log database.
    */
-  async flush(): Promise<void> {
+  flush(): Promise<void> {
+    return this.serializeMutation(() => this.flushPending());
+  }
+
+  private async flushPending(): Promise<void> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
 
-    if (this.isFlushing || this.pendingQueue.length === 0) {
+    if (this.pendingQueue.length === 0) {
       return;
     }
 
-    this.isFlushing = true;
     try {
       while (this.pendingQueue.length > 0) {
         const batch = this.pendingQueue.splice(0, 100);
@@ -102,7 +106,6 @@ export class LogSubsystem {
         console.warn('[LogSubsystem] Failed to flush logs to SQLite:', err);
       }
     } finally {
-      this.isFlushing = false;
       if (this.pendingQueue.length > 0) {
         this.scheduleFlush();
       }
@@ -131,7 +134,11 @@ export class LogSubsystem {
     }
   }
 
-  async updateLog(input: LogUpdateInput): Promise<ServiceResult<LogEntry>> {
+  updateLog(input: LogUpdateInput): Promise<ServiceResult<LogEntry>> {
+    return this.serializeMutation(() => this.updateLogExclusive(input));
+  }
+
+  private async updateLogExclusive(input: LogUpdateInput): Promise<ServiceResult<LogEntry>> {
     const id = input.id.trim();
     if (!id) {
       return {
@@ -142,7 +149,7 @@ export class LogSubsystem {
     }
 
     try {
-      await this.flush();
+      await this.flushPending();
       const updated = await updateLogRow({ ...input, id });
       if (!updated) {
         return {
@@ -172,7 +179,11 @@ export class LogSubsystem {
     }
   }
 
-  async deleteLogs(ids: string[]): Promise<ServiceResult<{ deletedCount: number }>> {
+  deleteLogs(ids: string[]): Promise<ServiceResult<{ deletedCount: number }>> {
+    return this.serializeMutation(() => this.deleteLogsExclusive(ids));
+  }
+
+  private async deleteLogsExclusive(ids: string[]): Promise<ServiceResult<{ deletedCount: number }>> {
     const cleanIds = ids.map((id) => id.trim()).filter(Boolean);
     if (cleanIds.length === 0) {
       return {
@@ -183,7 +194,7 @@ export class LogSubsystem {
     }
 
     try {
-      await this.flush();
+      await this.flushPending();
       const deletedCount = await deleteLogRowsByIds(cleanIds);
       const idSet = new Set(cleanIds);
       this.fallbackBuffer = this.fallbackBuffer.filter((item) => !idSet.has(item.id));
@@ -202,7 +213,11 @@ export class LogSubsystem {
     }
   }
 
-  async clearLogs(): Promise<ServiceResult<{ clearedCount: number }>> {
+  clearLogs(): Promise<ServiceResult<{ clearedCount: number }>> {
+    return this.serializeMutation(() => this.clearLogsExclusive());
+  }
+
+  private async clearLogsExclusive(): Promise<ServiceResult<{ clearedCount: number }>> {
     try {
       if (this.flushTimer) {
         clearTimeout(this.flushTimer);
@@ -229,6 +244,62 @@ export class LogSubsystem {
         timestamp: Date.now(),
       };
     }
+  }
+
+  /**
+   * Serializes expiration with pending writes and manual clearing so old batches cannot reappear.
+   * The guard rechecks lifecycle and settings after waiting for earlier database operations.
+   */
+  deleteExpiredLogs(
+    cutoff: number,
+    shouldRun: () => boolean,
+  ): Promise<ServiceResult<{ deletedCount: number }>> {
+    return this.serializeMutation(async () => {
+      if (!shouldRun()) {
+        return { ok: true, data: { deletedCount: 0 }, timestamp: Date.now() };
+      }
+      if (!Number.isFinite(cutoff) || cutoff <= 0) {
+        return {
+          ok: false,
+          error: { code: 'VALIDATION_ERROR', message: 'Invalid log expiration cutoff' },
+          timestamp: Date.now(),
+        };
+      }
+      try {
+        const dbCount = await deleteLogRowsBefore(cutoff, shouldRun);
+        if (dbCount === null) {
+          return { ok: true, data: { deletedCount: 0 }, timestamp: Date.now() };
+        }
+        const pendingCount = this.pendingQueue.filter((entry) => entry.timestamp < cutoff).length;
+        const hadExpiredFallback = this.fallbackBuffer.some((entry) => entry.timestamp < cutoff);
+        this.pendingQueue = this.pendingQueue.filter((entry) => entry.timestamp >= cutoff);
+        this.fallbackBuffer = this.fallbackBuffer.filter((entry) => entry.timestamp >= cutoff);
+        if (dbCount > 0 || pendingCount > 0 || hadExpiredFallback) {
+          this.notifyListeners();
+        }
+        return {
+          ok: true,
+          data: { deletedCount: dbCount + pendingCount },
+          timestamp: Date.now(),
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          error: {
+            code: 'LOGGER_ERROR',
+            message: 'Failed to delete expired application logs',
+            cause: err instanceof Error ? err.message : String(err),
+          },
+          timestamp: Date.now(),
+        };
+      }
+    });
+  }
+
+  private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation);
+    this.mutationTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   subscribe(listener: () => void): () => void {

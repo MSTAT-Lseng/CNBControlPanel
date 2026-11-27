@@ -32,6 +32,7 @@ import { createParserService } from '@/services/parser';
 import { createStorageService } from '@/services/storage';
 import { createWorkspaceParserService } from '@/services/workspace-parser';
 import { LogSubsystem } from './logger';
+import { LogCleanupScheduler } from './logCleanupScheduler';
 import { RefreshScheduler } from './scheduler';
 import { ExchangeCoordinator } from './transactions';
 import { DEFAULT_APP_SETTINGS } from './validator';
@@ -63,22 +64,36 @@ const scheduler = new RefreshScheduler(
   },
 );
 
+const logCleanupScheduler = new LogCleanupScheduler(
+  DEFAULT_APP_SETTINGS,
+  schedulerLogger,
+  (cutoff, shouldRun) => logSubsystem.deleteExpiredLogs(cutoff, shouldRun),
+);
+
 coordinator.setSettingsChangeHandler((nextSettings) => {
   scheduler.updateSettings(nextSettings);
+  logCleanupScheduler.updateSettings(nextSettings);
 });
+
+let lifecycleRevision = 0;
 
 export const exchangeService: ExchangePort = {
   async initialize(): Promise<ServiceResult<ExchangeUiState>> {
+    const revision = lifecycleRevision;
     const res = await coordinator.initialize();
-    if (res.ok) {
+    if (res.ok && revision === lifecycleRevision) {
       scheduler.updateSettings(res.data.settings);
       scheduler.start();
+      logCleanupScheduler.updateSettings(res.data.settings);
+      logCleanupScheduler.start();
     }
     return res;
   },
 
   shutdown(): void {
+    lifecycleRevision += 1;
     scheduler.stop();
+    logCleanupScheduler.stop();
   },
 
   getStateSnapshot(): ExchangeUiState {
