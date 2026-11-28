@@ -343,7 +343,7 @@ Every transaction validates inputs before invoking `storage`, `parser`, or `work
   - Import: `DocumentPicker.getDocumentAsync({ type: 'application/json', copyToCacheDirectory: true })`, read the selected file with `FileSystem.readAsStringAsync`, pass the raw text to `exchangeService.importAccounts(...)`, and show an `Alert.alert` summary of created/updated/skipped/failed accounts. Disable both rows while a backup transaction or sync is running; log every interaction with `reportUiLog(...)`. The UI never keeps a second copy of the file contents.
   - Dependencies are Expo Go SDK 58 modules only: `expo-document-picker`, `expo-file-system`, `expo-sharing`. No custom native code and no Web fallback.
 - **App Version Retrieval in Expo Go**:
-  - Reads `Constants.expoConfig?.version ?? '1.0.2'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
+  - Reads `Constants.expoConfig?.version ?? '1.0.3'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
 
 ---
 

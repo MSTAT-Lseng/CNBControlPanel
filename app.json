@@ -2,7 +2,7 @@
   "expo": {
     "name": "CNB 面板",
     "slug": "cnb-panel",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "scheme": "cnbpanel",

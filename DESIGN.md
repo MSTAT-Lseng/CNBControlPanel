@@ -155,7 +155,7 @@ Used at the top of `概览`, `账户`, `用量`, and `设置`:
 ### 5.4 设置 (Settings Tab — `settings`)
 Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top to bottom (five sections):
 1. **Section 1 — 应用信息:**
-   - Row 1: `App 版本` — trailing value `v1.0.2` (from `Constants.expoConfig.version`)
+   - Row 1: `App 版本` — trailing value `v1.0.3` (from `Constants.expoConfig.version`)
    - Row 2: `当前系统时间` — trailing live-updating value (`YYYY-MM-DD HH:mm:ss`, tabular numerals)
 2. **Section 2 — 刷新策略:**
    - Row 1: `启用应用时后台自动刷新用量` — trailing iOS `<Switch>`

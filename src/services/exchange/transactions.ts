@@ -473,7 +473,7 @@ export class ExchangeCoordinator {
           lastSyncedAt: profile.lastSyncedAt,
         }));
 
-      const appVersion = Constants.expoConfig?.version ?? '1.0.2';
+      const appVersion = Constants.expoConfig?.version ?? '1.0.3';
       const file = createBackupFile(entries, appVersion, Date.now());
 
       this.logger.info(

@@ -49,7 +49,7 @@ export function SettingsScreen() {
   const decreaseRetentionDisabled = retentionDisabled || settings.logRetentionHours <= 1;
   const increaseRetentionDisabled = retentionDisabled || settings.logRetentionHours >= 720;
 
-  const appVersion = Constants.expoConfig?.version ?? '1.0.2';
+  const appVersion = Constants.expoConfig?.version ?? '1.0.3';
 
   useEffect(() => {
     const timer = setInterval(() => {
