@@ -5,7 +5,9 @@
  */
 
 import type {
+  AccountBackupFile,
   AccountEditorPayload,
+  AccountImportSummary,
   AccountView,
   AppSettings,
   BatchSyncSummary,
@@ -122,6 +124,14 @@ export const exchangeService: ExchangePort = {
 
   deleteAccount(username: string): Promise<ServiceResult<{ deleted: boolean }>> {
     return coordinator.deleteAccount(username);
+  },
+
+  exportAccounts(): Promise<ServiceResult<AccountBackupFile>> {
+    return coordinator.exportAccounts();
+  },
+
+  importAccounts(rawJson: string): Promise<ServiceResult<AccountImportSummary>> {
+    return coordinator.importAccounts(rawJson);
   },
 
   syncAccountUsage(username: string): Promise<ServiceResult<UsageSnapshot>> {

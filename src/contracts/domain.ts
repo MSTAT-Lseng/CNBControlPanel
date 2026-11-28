@@ -76,6 +76,36 @@ export interface UpdateAccountInput {
   remark?: string;
 }
 
+export interface AccountBackupEntry {
+  username: string;
+  cookie: string;
+  remark: string;
+  createdAt: number;
+  updatedAt: number;
+  lastSyncedAt: number | null;
+}
+
+export interface AccountBackupFile {
+  format: 'cnb-panel-accounts';
+  schemaVersion: 1;
+  appVersion: string;
+  exportedAt: number;
+  accounts: AccountBackupEntry[];
+}
+
+export interface AccountImportFailure {
+  username: string;
+  message: string;
+}
+
+export interface AccountImportSummary {
+  total: number;
+  created: number;
+  updated: number;
+  skipped: number; // Reserved for non-overwrite import policies; zero under the overwrite policy.
+  failed: AccountImportFailure[];
+}
+
 export interface MetricAggregateSummary {
   metric: QuotaMetricKey;
   label: string;

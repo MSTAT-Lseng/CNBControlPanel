@@ -153,7 +153,7 @@ Used at the top of `概览`, `账户`, `用量`, and `设置`:
 ---
 
 ### 5.4 设置 (Settings Tab — `settings`)
-Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top to bottom:
+Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top to bottom (five sections):
 1. **Section 1 — 应用信息:**
    - Row 1: `App 版本` — trailing value `v1.0.2` (from `Constants.expoConfig.version`)
    - Row 2: `当前系统时间` — trailing live-updating value (`YYYY-MM-DD HH:mm:ss`, tabular numerals)
@@ -166,7 +166,18 @@ Pure iOS 18 System Settings Inset Grouped List style, ordered strictly from top 
    - Row 2: `日志保留时长` — trailing `−` / `N 小时` / `＋` stepper controls (`±1` hour per tap, 1–720 hour range; disabled and visually dimmed when cleanup is off)
    - Row 3: `运行日志 (Log)` — trailing `查看 >` disclosure indicator; pushes standalone `logs` page
    - Footer: `点按“− / ＋”每次调整 1 小时（范围 1–720 小时）。` (stable copy; saving settings never inserts transient text into the layout)
-4. **Section 4 — 数据清理:**
+4. **Section 4 — 账户数据 (Account Backup):**
+   - Row 1: `导出账户` — iOS 18 inset grouped row with a document/arrow icon (theme accent) and trailing `chevron.right`, placed between 诊断日志 and 数据清理.
+     - On tap: show an `Alert.alert` warning that the exported JSON contains **plaintext Cookies** and must be stored carefully; buttons `取消` / `继续导出`.
+     - On confirm: `exchangeService.exportAccounts()` → write `cnb-panel-accounts-YYYYMMDD-HHmmss.json` to `FileSystem.documentDirectory` → `Sharing.shareAsync(uri, { mimeType: 'application/json' })` to open the native iOS share sheet (Save to Files / AirDrop).
+     - The backup payload is `{ format: 'cnb-panel-accounts', schemaVersion: 1, appVersion, exportedAt, accounts: [...] }`; each entry carries `username`, `cookie`, `remark`, `createdAt`, `updatedAt`, `lastSyncedAt`. No settings, caches, or logs are included.
+   - Row 2: `导入账户` — iOS 18 inset grouped row with a folder/arrow icon and trailing `chevron.right`.
+     - On tap: `DocumentPicker.getDocumentAsync({ type: 'application/json', copyToCacheDirectory: true })` → read the file via `FileSystem.readAsStringAsync` → `exchangeService.importAccounts(rawText)`.
+     - Import overwrites same-name accounts (cookie + remark, local `createdAt` preserved), creates new usernames unsynced, and clears the affected usage/workspace caches. Malformed files are rejected with a native alert showing the Exchange validation message.
+     - On completion: native `Alert.alert` summary: `成功导入 N 个账户，新建 X，覆盖 Y，跳过 Z，失败 W`; failed entries list username + reason.
+   - Both rows are disabled (dimmed to `0.45` opacity, matching existing dimmed rows) while any backup transaction or account sync is in progress; press feedback uses `${bgSecondaryFill}66`. Every interaction is reported through `exchangeService.reportUiLog(...)`.
+   - Footer copy: `导出的文件包含明文 Cookie，请勿通过不安全渠道传输或长期保存。`
+5. **Section 5 — 数据清理:**
    - Row 1: `清除缓存和 Log 数据` — centered destructive red (`#FF3B30`) button; shows native iOS `Alert.alert` confirmation before clearing usage/workspace caches & all logs (accounts and settings remain intact).
 
 ---

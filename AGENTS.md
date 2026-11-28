@@ -79,6 +79,7 @@ CNBControlPanel/
         │   ├── index.ts
         │   ├── validator.ts
         │   ├── transactions.ts
+        │   ├── backup.ts                   # Account backup export/import serialization & validation
         │   ├── scheduler.ts
         │   ├── logCleanupScheduler.ts
         │   └── logger/
@@ -171,6 +172,10 @@ Key domain models:
     logRetentionHours: number; // Clamped integer 1..720 (default: 24)
   }
   ```
+- **Account Backup Contracts (`ExchangePort` only):**
+  - `AccountBackupFile`: `{ format: 'cnb-panel-accounts'; schemaVersion: 1; appVersion: string; exportedAt: number; accounts: AccountBackupEntry[] }`
+  - `AccountBackupEntry`: `{ username: string; cookie: string; remark: string; createdAt: number; updatedAt: number; lastSyncedAt: number | null }` – account profiles plus plaintext Cookies; no settings, caches, or logs.
+  - `AccountImportSummary`: `{ total: number; created: number; updated: number; skipped: number; failed: { username: string; message: string }[] }`
 - `LogLevel`: `'V' | 'I' | 'W' | 'E'`
 - `ServiceSource`: `'UI' | 'Storage' | 'Parser' | 'WorkspaceParser' | 'Exchange'`
 - `LogEntry`:
@@ -295,6 +300,8 @@ Every transaction validates inputs before invoking `storage`, `parser`, or `work
 10. `getWorkspaceBuildLog({ username, slug, sn, includeConfig? })` / `getWorkspaceStageLog({ username, slug, sn, pipelineId, stageId, status? })` — resolves account credentials via `storage` and delegates to `workspaceParser` for on-demand container build detail and stage output retrieval.
 11. `getSettings()` / `updateSettings(patch)` — reads/updates `AppSettings`, reconfiguring both the auto-refresh scheduler and foreground log-cleanup scheduler immediately.
 12. `clearCacheAndLogs()` — clears `usage_cache` and `workspace_cache` via `storage.clearTable(...)`, resets `lastSyncedAt` to `null` on accounts (preserving accounts and settings), and calls `logger.clearLogs()`, then logs a fresh `I` entry confirming the reset.
+13. `exportAccounts()` — merges the `accounts` and `accounts_secrets` tables into a versioned `AccountBackupFile`; returns the plain object to UI (which writes/shares the file) and logs counts only, never Cookie values.
+14. `importAccounts(rawJson)` — parses and validates the backup (`backup.ts` + `validator.ts`): rejects malformed JSON, wrong `format`/`schemaVersion`, oversized files, invalid fields, and duplicate usernames; overwrites same-name accounts (cookie + remark, preserving local `createdAt`; new accounts start unsynced), clears affected `usage_cache`/`workspace_cache` entries and resets `lastSyncedAt` to `null`, and returns an `AccountImportSummary`. Any storage failure rolls back every applied profile/secret write. The operation is serialized against usage sync so a cookie replacement cannot race with a refresh.
 
 #### C. Auto-Refresh Scheduler (`scheduler.ts`)
 - Listens to React Native `AppState` transitions (`'background' | 'inactive'` -> `'active'`).
@@ -330,6 +337,11 @@ Every transaction validates inputs before invoking `storage`, `parser`, or `work
   - Tapping the `云原生开发-CPU` card on `概览` pushes `workspaces` (up to 5 recent containers per user + `"查看更多"` action per user).
   - Tapping `"查看更多"` pushes `workspace-history` for that account to load paginated older containers.
   - Tapping any container row in either `workspaces` or `workspace-history` pushes `workspace-logs` to inspect the full build summary and stage logs.
+- **Account Backup UI (Settings tab)**:
+  - A "账户数据" inset grouped section between "诊断日志" and "数据清理" exposes `导出账户` and `导入账户` rows.
+  - Export: `Alert.alert` warns that the file contains plaintext Cookies; on confirm, call `exchangeService.exportAccounts()`, write JSON to `FileSystem.documentDirectory` (`cnb-panel-accounts-YYYYMMDD-HHmmss.json`), then open the iOS share sheet via `Sharing.shareAsync(uri, { mimeType: 'application/json' })`.
+  - Import: `DocumentPicker.getDocumentAsync({ type: 'application/json', copyToCacheDirectory: true })`, read the selected file with `FileSystem.readAsStringAsync`, pass the raw text to `exchangeService.importAccounts(...)`, and show an `Alert.alert` summary of created/updated/skipped/failed accounts. Disable both rows while a backup transaction or sync is running; log every interaction with `reportUiLog(...)`. The UI never keeps a second copy of the file contents.
+  - Dependencies are Expo Go SDK 58 modules only: `expo-document-picker`, `expo-file-system`, `expo-sharing`. No custom native code and no Web fallback.
 - **App Version Retrieval in Expo Go**:
   - Reads `Constants.expoConfig?.version ?? '1.0.2'` so Settings displays the CNB 面板 project version rather than the Expo Go host app binary version.
 

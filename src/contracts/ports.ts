@@ -4,7 +4,9 @@
  */
 
 import type {
+  AccountBackupFile,
   AccountEditorPayload,
+  AccountImportSummary,
   AccountView,
   AppSettings,
   BatchSyncSummary,
@@ -118,6 +120,9 @@ export interface ExchangePort {
   createAccount(input: CreateAccountInput): Promise<ServiceResult<AccountView>>;
   updateAccount(input: UpdateAccountInput): Promise<ServiceResult<AccountView>>;
   deleteAccount(username: string): Promise<ServiceResult<{ deleted: boolean }>>;
+
+  exportAccounts(): Promise<ServiceResult<AccountBackupFile>>;
+  importAccounts(rawJson: string): Promise<ServiceResult<AccountImportSummary>>;
 
   syncAccountUsage(username: string): Promise<ServiceResult<UsageSnapshot>>;
   syncAllAccountsUsage(reason?: 'manual' | 'launch' | 'foreground' | 'interval'): Promise<ServiceResult<BatchSyncSummary>>;

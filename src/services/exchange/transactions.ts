@@ -5,7 +5,11 @@
  */
 
 import type {
+  AccountBackupEntry,
+  AccountBackupFile,
   AccountEditorPayload,
+  AccountImportFailure,
+  AccountImportSummary,
   AccountProfile,
   AccountSecret,
   AccountView,
@@ -34,6 +38,8 @@ import type {
   WorkspaceStageLogQueryInput,
   WorkspaceSyncInput,
 } from '@/contracts';
+import Constants from 'expo-constants';
+import { createBackupFile, parseBackupFile } from './backup';
 import type { LogSubsystem } from './logger';
 import {
   DEFAULT_APP_SETTINGS,
@@ -157,6 +163,7 @@ export class ExchangeCoordinator {
 
   private initPromise: Promise<ServiceResult<ExchangeUiState>> | null = null;
   private activeBatchSyncPromise: Promise<ServiceResult<BatchSyncSummary>> | null = null;
+  private mutationTail: Promise<void> = Promise.resolve();
   private onSettingsChanged?: (settings: AppSettings) => void;
 
   constructor(
@@ -174,6 +181,22 @@ export class ExchangeCoordinator {
 
   setSettingsChangeHandler(handler: (settings: AppSettings) => void): void {
     this.onSettingsChanged = handler;
+  }
+
+  // Serializes storage mutations so backup imports cannot race with usage syncs.
+  private runSerialized<T>(task: () => Promise<T>): Promise<T> {
+    const previous = this.mutationTail;
+    let release!: () => void;
+    this.mutationTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    return previous.then(async () => {
+      try {
+        return await task();
+      } finally {
+        release();
+      }
+    });
   }
 
   getStateSnapshot(): ExchangeUiState {
@@ -415,7 +438,220 @@ export class ExchangeCoordinator {
     return ok({ deleted: profileRemove.data.deleted });
   }
 
-  async syncAccountUsage(username: string): Promise<ServiceResult<UsageSnapshot>> {
+  exportAccounts(): Promise<ServiceResult<AccountBackupFile>> {
+    return this.runSerialized(() => this.exportAccountsInternal());
+  }
+
+  private async exportAccountsInternal(): Promise<ServiceResult<AccountBackupFile>> {
+    this.logger.verbose('exchange.exportAccounts', 'Exporting account backup');
+    try {
+      const [profilesRes, secretsRes] = await Promise.all([
+        this.storage.readTable<AccountProfile>({ table: TABLE_ACCOUNTS }),
+        this.storage.readTable<AccountSecret>({ table: TABLE_SECRETS }),
+      ]);
+      if (!profilesRes.ok) {
+        return fail('STORAGE_ERROR', profilesRes.error.message, profilesRes.error.cause);
+      }
+      if (!secretsRes.ok) {
+        return fail('STORAGE_ERROR', secretsRes.error.message, secretsRes.error.cause);
+      }
+
+      const secretMap = new Map<string, AccountSecret>();
+      for (const record of secretsRes.data) {
+        secretMap.set(record.key, record.value);
+      }
+
+      const entries: AccountBackupEntry[] = profilesRes.data
+        .map((record) => record.value)
+        .filter((profile) => profile.username.trim().length > 0)
+        .map((profile) => ({
+          username: profile.username,
+          cookie: secretMap.get(profile.username)?.cookie ?? '',
+          remark: profile.remark,
+          createdAt: profile.createdAt,
+          updatedAt: profile.updatedAt,
+          lastSyncedAt: profile.lastSyncedAt,
+        }));
+
+      const appVersion = Constants.expoConfig?.version ?? '1.0.2';
+      const file = createBackupFile(entries, appVersion, Date.now());
+
+      this.logger.info(
+        'exchange.exportAccounts',
+        `Exported ${entries.length} account(s) to backup payload`,
+      );
+      return ok(file);
+    } catch (err) {
+      this.logger.error('exchange.exportAccounts', 'Failed to export account backup', String(err));
+      return fail('EXCHANGE_ERROR', '导出账户数据失败', err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  importAccounts(rawJson: string): Promise<ServiceResult<AccountImportSummary>> {
+    return this.runSerialized(() => this.importAccountsInternal(rawJson));
+  }
+
+  private async importAccountsInternal(rawJson: string): Promise<ServiceResult<AccountImportSummary>> {
+    this.logger.verbose('exchange.importAccounts', 'Importing account backup');
+    const parsed = parseBackupFile(rawJson);
+    if (!parsed.valid || !parsed.value) {
+      this.logger.warn('exchange.importAccounts', 'Backup validation failed', parsed.message);
+      return fail('VALIDATION_ERROR', parsed.message ?? '备份文件格式无效');
+    }
+
+    const entries = parsed.value.accounts;
+    const summary: AccountImportSummary = {
+      total: entries.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: [],
+    };
+
+    // Capture existing profiles and secrets as a rollback baseline for overwritten accounts.
+    const [profilesRes, secretsRes] = await Promise.all([
+      this.storage.readTable<AccountProfile>({ table: TABLE_ACCOUNTS }),
+      this.storage.readTable<AccountSecret>({ table: TABLE_SECRETS }),
+    ]);
+    if (!profilesRes.ok) {
+      return fail('STORAGE_ERROR', profilesRes.error.message, profilesRes.error.cause);
+    }
+    if (!secretsRes.ok) {
+      return fail('STORAGE_ERROR', secretsRes.error.message, secretsRes.error.cause);
+    }
+
+    const profileMap = new Map<string, AccountProfile>();
+    for (const record of profilesRes.data) {
+      profileMap.set(record.key, record.value);
+    }
+    const secretMap = new Map<string, AccountSecret>();
+    for (const record of secretsRes.data) {
+      secretMap.set(record.key, record.value);
+    }
+
+    type AppliedWrite = {
+      username: string;
+      hadProfile: boolean;
+      hadSecret: boolean;
+      previousProfile: AccountProfile | null;
+      previousSecret: AccountSecret | null;
+    };
+    const applied: AppliedWrite[] = [];
+
+    try {
+      const now = Date.now();
+      for (const entry of entries) {
+        const existingProfile = profileMap.get(entry.username) ?? null;
+        const previousSecret = secretMap.get(entry.username) ?? null;
+        const hadProfile = existingProfile !== null;
+        const hadSecret = previousSecret !== null;
+
+        try {
+          const secretSaveRes = await this.storage.save({
+            table: TABLE_SECRETS,
+            key: entry.username,
+            value: { cookie: entry.cookie, updatedAt: now } satisfies AccountSecret,
+          });
+          if (!secretSaveRes.ok) {
+            throw new Error(secretSaveRes.error.message);
+          }
+
+          const nextProfile: AccountProfile = {
+            username: entry.username,
+            remark: entry.remark,
+            createdAt: hadProfile ? existingProfile!.createdAt : entry.createdAt,
+            updatedAt: now,
+            lastSyncedAt: null,
+          };
+          const profileSaveRes = await this.storage.save({
+            table: TABLE_ACCOUNTS,
+            key: entry.username,
+            value: nextProfile,
+          });
+          if (!profileSaveRes.ok) {
+            throw new Error(profileSaveRes.error.message);
+          }
+
+          const cacheRemoveRes = await Promise.all([
+            this.storage.remove({ table: TABLE_USAGE_CACHE, key: entry.username }),
+            this.storage.remove({ table: TABLE_WORKSPACE_CACHE, key: entry.username }),
+          ]);
+          if (cacheRemoveRes.some((res) => !res.ok)) {
+            throw new Error('Failed to clear cached data for imported account');
+          }
+
+          applied.push({
+            username: entry.username,
+            hadProfile,
+            hadSecret,
+            previousProfile: existingProfile,
+            previousSecret,
+          });
+          if (hadProfile) {
+            summary.updated += 1;
+          } else {
+            summary.created += 1;
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          const failure: AccountImportFailure = { username: entry.username, message };
+          summary.failed.push(failure);
+          this.logger.error(
+            'exchange.importAccounts',
+            `Failed to import account "${entry.username}"`,
+            message,
+          );
+        }
+      }
+
+      // Roll back every applied write when any account failed, keeping the import all-or-nothing.
+      if (summary.failed.length > 0) {
+        for (const write of applied.reverse()) {
+          if (write.hadProfile && write.previousProfile) {
+            // Caches were cleared during the import, so keep the restored profile unsynced.
+            await this.storage.save({
+              table: TABLE_ACCOUNTS,
+              key: write.username,
+              value: { ...write.previousProfile, lastSyncedAt: null },
+            });
+          } else {
+            await this.storage.remove({ table: TABLE_ACCOUNTS, key: write.username });
+          }
+          if (write.hadSecret && write.previousSecret) {
+            await this.storage.save({
+              table: TABLE_SECRETS,
+              key: write.username,
+              value: write.previousSecret,
+            });
+          } else {
+            await this.storage.remove({ table: TABLE_SECRETS, key: write.username });
+          }
+        }
+        await this.rebuildStateSnapshot();
+        return fail(
+          'EXCHANGE_ERROR',
+          `导入失败：${summary.failed.length} 个账户未成功写入，已回滚全部更改`,
+          summary.failed.map((item) => `${item.username}: ${item.message}`).join('; '),
+        );
+      }
+
+      await this.rebuildStateSnapshot();
+      this.logger.info(
+        'exchange.importAccounts',
+        `Imported ${summary.total} account(s) (created=${summary.created}, updated=${summary.updated})`,
+      );
+      return ok(summary);
+    } catch (err) {
+      this.logger.error('exchange.importAccounts', 'Unexpected failure during import', String(err));
+      return fail('EXCHANGE_ERROR', '导入账户数据失败', err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  syncAccountUsage(username: string): Promise<ServiceResult<UsageSnapshot>> {
+    return this.runSerialized(() => this.syncAccountUsageInternal(username));
+  }
+
+  private async syncAccountUsageInternal(username: string): Promise<ServiceResult<UsageSnapshot>> {
     const cleanUsername = username.trim();
     if (!cleanUsername) {
       return fail('VALIDATION_ERROR', '用户名不能为空');
@@ -481,7 +717,13 @@ export class ExchangeCoordinator {
     }
   }
 
-  async syncAllAccountsUsage(
+  syncAllAccountsUsage(
+    reason: 'manual' | 'launch' | 'foreground' | 'interval' = 'manual',
+  ): Promise<ServiceResult<BatchSyncSummary>> {
+    return this.runSerialized(() => this.syncAllAccountsUsageInternal(reason));
+  }
+
+  private async syncAllAccountsUsageInternal(
     reason: 'manual' | 'launch' | 'foreground' | 'interval' = 'manual',
   ): Promise<ServiceResult<BatchSyncSummary>> {
     if (this.activeBatchSyncPromise) {
@@ -517,7 +759,7 @@ export class ExchangeCoordinator {
         let succeeded = 0;
 
         for (const profile of profiles) {
-          const singleRes = await this.syncAccountUsage(profile.username);
+          const singleRes = await this.syncAccountUsageInternal(profile.username);
           if (singleRes.ok) {
             succeeded += 1;
           } else {

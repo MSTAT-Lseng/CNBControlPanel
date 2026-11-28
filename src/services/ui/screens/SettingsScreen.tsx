@@ -7,8 +7,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import Constants from 'expo-constants';
+import * as DocumentPicker from 'expo-document-picker';
+import { File, Paths } from 'expo-file-system';
 import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import * as Sharing from 'expo-sharing';
 import { SymbolView, type SFSymbol } from 'expo-symbols';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AppSettings } from '@/contracts/domain';
@@ -40,6 +43,8 @@ export function SettingsScreen() {
   const savingSettings = pendingSettings !== null;
   const [now, setNow] = useState(() => new Date());
   const settingsSaveLock = useRef(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const backupBusyRef = useRef(false);
   const retentionDisabled = !settings.autoLogCleanupEnabled;
   const decreaseRetentionDisabled = retentionDisabled || settings.logRetentionHours <= 1;
   const increaseRetentionDisabled = retentionDisabled || settings.logRetentionHours >= 720;
@@ -148,6 +153,114 @@ export function SettingsScreen() {
   const handleOpenLogs = () => {
     exchangeService.reportUiLog('I', 'ui.settings.openLogs', 'Opening standalone Logs page');
     router.push('/logs');
+  };
+
+  const buildBackupFileName = (): string => {
+    const stamp = new Date();
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `cnb-panel-accounts-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(
+      stamp.getDate(),
+    )}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}${pad(stamp.getSeconds())}.json`;
+  };
+
+  const handleExportAccounts = () => {
+    if (backupBusyRef.current) {
+      return;
+    }
+    exchangeService.reportUiLog('I', 'ui.settings.exportAccounts', 'Export accounts requested');
+    Alert.alert(
+      '导出账户数据',
+      '导出的 JSON 文件包含所有账户的明文 Cookie。请仅保存在安全位置，勿通过不安全渠道传输。是否继续？',
+      [
+        { text: '取消', style: 'cancel' },
+        {
+          text: '继续导出',
+          onPress: () => {
+            void (async () => {
+              if (backupBusyRef.current) {
+                return;
+              }
+              backupBusyRef.current = true;
+              setBackupBusy(true);
+              try {
+                const res = await exchangeService.exportAccounts();
+                if (!res.ok) {
+                  Alert.alert('导出失败', res.error.message);
+                  return;
+                }
+                const file = new File(Paths.document, buildBackupFileName());
+                await file.write(JSON.stringify(res.data, null, 2));
+                await Sharing.shareAsync(file.uri, { mimeType: 'application/json' });
+                exchangeService.reportUiLog(
+                  'I',
+                  'ui.settings.exportAccounts',
+                  `Shared backup with ${res.data.accounts.length} account(s)`,
+                );
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                exchangeService.reportUiLog('E', 'ui.settings.exportAccounts', message);
+                Alert.alert('导出失败', '无法生成或分享备份文件，请稍后重试。');
+              } finally {
+                backupBusyRef.current = false;
+                setBackupBusy(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  };
+
+  const handleImportAccounts = () => {
+    if (backupBusyRef.current) {
+      return;
+    }
+    exchangeService.reportUiLog('I', 'ui.settings.importAccounts', 'Import accounts requested');
+    void (async () => {
+      backupBusyRef.current = true;
+      setBackupBusy(true);
+      try {
+        const picked = await DocumentPicker.getDocumentAsync({
+          type: 'application/json',
+          copyToCacheDirectory: true,
+        });
+        if (picked.canceled || !picked.assets || picked.assets.length === 0) {
+          return;
+        }
+        const [asset] = picked.assets;
+        if (!asset) {
+          return;
+        }
+        const raw = await new File(asset.uri).text();
+        const res = await exchangeService.importAccounts(raw);
+        if (!res.ok) {
+          exchangeService.reportUiLog('W', 'ui.settings.importAccounts', res.error.message);
+          Alert.alert('导入失败', res.error.message);
+          return;
+        }
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        exchangeService.reportUiLog(
+          'I',
+          'ui.settings.importAccounts',
+          `Imported ${res.data.total} account(s) (created=${res.data.created}, updated=${res.data.updated})`,
+        );
+        const failureLines = res.data.failed
+          .map((failure) => `${failure.username}：${failure.message}`)
+          .join('\n');
+        Alert.alert(
+          '导入完成',
+          `共 ${res.data.total} 个账户，新建 ${res.data.created}，覆盖 ${res.data.updated}，跳过 ${res.data.skipped}，失败 ${res.data.failed.length}。` +
+            (failureLines ? `\n\n失败详情：\n${failureLines}` : ''),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        exchangeService.reportUiLog('E', 'ui.settings.importAccounts', message);
+        Alert.alert('导入失败', '无法读取备份文件，请确认文件格式后重试。');
+      } finally {
+        backupBusyRef.current = false;
+        setBackupBusy(false);
+      }
+    })();
   };
 
   const handleClearCacheAndLogs = () => {
@@ -430,7 +543,68 @@ export function SettingsScreen() {
           </Text>
         </View>
 
-        {/* Section 4: Clear Cache and Log Data */}
+        {/* Section 4: Account Backup Export and Import */}
+        <View style={styles.sectionBlock}>
+          <Text style={[styles.sectionLabel, { color: palette.textSecondary }]}>账户数据</Text>
+          <View style={[styles.groupCard, { backgroundColor: palette.bgCard }]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="导出账户"
+              accessibilityState={{ disabled: backupBusy, busy: backupBusy }}
+              onPress={handleExportAccounts}
+              disabled={backupBusy}
+              style={({ pressed }) => [
+                styles.row,
+                {
+                  borderBottomWidth: StyleSheet.hairlineWidth,
+                  borderBottomColor: palette.separator,
+                },
+                pressed && !backupBusy && { backgroundColor: `${palette.bgSecondaryFill}66` },
+                backupBusy && styles.rowDimmed,
+              ]}
+            >
+              <View style={styles.rowLeft}>
+                <SettingIconBadge symbol="square.and.arrow.up" bgColor={palette.themeAccent} />
+                <Text style={[styles.rowTitle, { color: palette.textPrimary }]}>导出账户</Text>
+              </View>
+              <SymbolView
+                name="chevron.right"
+                size={13}
+                weight="semibold"
+                tintColor={palette.textTertiary}
+              />
+            </Pressable>
+
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="导入账户"
+              accessibilityState={{ disabled: backupBusy, busy: backupBusy }}
+              onPress={handleImportAccounts}
+              disabled={backupBusy}
+              style={({ pressed }) => [
+                styles.row,
+                pressed && !backupBusy && { backgroundColor: `${palette.bgSecondaryFill}66` },
+                backupBusy && styles.rowDimmed,
+              ]}
+            >
+              <View style={styles.rowLeft}>
+                <SettingIconBadge symbol="square.and.arrow.down" bgColor={palette.accentBlue} />
+                <Text style={[styles.rowTitle, { color: palette.textPrimary }]}>导入账户</Text>
+              </View>
+              <SymbolView
+                name="chevron.right"
+                size={13}
+                weight="semibold"
+                tintColor={palette.textTertiary}
+              />
+            </Pressable>
+          </View>
+          <Text style={[styles.sectionFooter, { color: palette.textSecondary }]}>
+            导出的文件包含明文 Cookie，请勿通过不安全渠道传输或长期保存。
+          </Text>
+        </View>
+
+        {/* Section 5: Clear Cache and Log Data */}
         <View style={styles.sectionBlock}>
           <View style={[styles.groupCard, { backgroundColor: palette.bgCard }]}>
             <Pressable
